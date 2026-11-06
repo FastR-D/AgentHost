@@ -9,9 +9,7 @@
 
 services:
   agenthost-node:
-    build:
-      context: .
-      target: runtime-node   # ubuntu 24.04 dev container with Codex CLI
+    build: .
     environment:
       # —— node 角色必填 ——
       AGENTHOST_HUB: https://agenthost.example.com   # 公网 Web 控制台地址
@@ -19,16 +17,15 @@ services:
       AGENTHOST_NODE_NAME: "内网节点"
 
       # —— 任务执行 ——
-      AGENTHOST_SANDBOX: workspace-write             # read-only | workspace-write | danger-full-access
+      AGENTHOST_SANDBOX: workspace-write
       AGENTHOST_APPROVAL_POLICY: never
-      # AGENTHOST_MODEL: gpt-5                         # 默认沿用 codex 配置，可选覆盖
+      # AGENTHOST_MODEL: gpt-5
 
-      # —— 任务在容器里跑，数据落本地卷 ——
       AGENTHOST_DATA: /data
       AGENTHOST_WORKSPACE: /workspace
     volumes:
-      - ./node-data:/data                  # 节点私有数据（如 git 密钥）
-      - ./workspace:/workspace             # 任务工作目录（代码仓库 clone 在这）
-      - ~/.codex:/root/.codex:ro           # codex 登录 / config.toml（只读挂载）
+      - ./node-data:/data
+      - ./workspace:/workspace
+      - ~/.codex:/root/.codex:ro
     # 不映射端口：容器主动连 hub，外部不需要访问它
     restart: unless-stopped

@@ -1,14 +1,12 @@
 services:
   agenthost:
-    build:
-      context: .
-      target: runtime-web    # lightweight: no Codex CLI, no Node.js, no dev tools
+    build: .
     ports:
       - "8080:8080"
     environment:
       # AGENTHOST_TOKEN: change-me    # default: generated and printed in the logs
       # AGENTHOST_AUTH: none          # disable auth (trusted networks only)
-      AGENTHOST_LOCAL_NODE: "off"     # all tasks run on remote node containers
+      AGENTHOST_LOCAL_NODE: "off"     # tasks run on remote node containers, not here
     volumes:
-      - ./data:/data                  # sessions, runs, tokens
+      - ./data:/data
     restart: unless-stopped

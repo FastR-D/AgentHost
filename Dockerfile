@@ -22,7 +22,6 @@ WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source and the pre-built web dist (required by //go:embed all:web/dist).
 COPY . .
 COPY --from=web-builder /build/web/dist ./web/dist
 
@@ -31,40 +30,12 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /agenthost ./cmd/agenthost
 
 
-# ── Stage 3: runtime-web — lightweight web console (no Codex CLI) ─────────────
-# This image only runs the AgentHost web server. It has no Codex, Node.js,
-# or dev tools. All task execution lives on node containers (see runtime-node).
-# AGENTHOST_LOCAL_NODE=off so it never tries to spawn Codex locally.
-FROM debian:bookworm-slim AS runtime-web
-
-RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-COPY --from=go-builder /agenthost /usr/local/bin/agenthost
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-
-ENV AGENTHOST_ADDR=:8080 \
-    AGENTHOST_DATA=/data \
-    AGENTHOST_LOCAL_NODE=off \
-    AGENTHOST_SKIP_INSTALL=1
-
-VOLUME ["/data"]
-EXPOSE 8080
-
-HEALTHCHECK --interval=30s --timeout=5s \
-  CMD curl -fsS http://127.0.0.1:8080/healthz || exit 1
-
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD []
-
-
-# ── Stage 4: runtime-node — ubuntu 24.04 dev container (default) ─────────────
-# Full dev environment for running Codex CLI tasks. Use this for the node role:
-#   docker compose -f docker-compose.node.yml up
-# Codex runs here along with all workspace files and task logs.
-FROM ubuntu:24.04 AS runtime-node
+# ── Stage 3: runtime — ubuntu 24.04, full dev environment ─────────────────────
+# One image for both roles:
+#   Web console:  docker compose up                          (AGENTHOST_LOCAL_NODE=off)
+#   Node role:    docker compose -f docker-compose.node.yml  (sets AGENTHOST_HUB)
+# Codex CLI is always present; whether it runs depends on the role.
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -83,7 +54,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Codex CLI + platform-native binary
+# Codex CLI + platform-native binary.
 # npm 10.x silently skips platform-alias optionalDependencies,
 # so install the main package then the arch-specific one explicitly.
 RUN npm install -g --no-audit --no-fund @openai/codex \
