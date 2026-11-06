@@ -47,7 +47,7 @@ func main() {
 			os.Exit(runCheck(os.Args[2:]))
 		}
 	}
-	addr := flag.String("addr", env("AGENTHOST_ADDR", "0.0.0.0:8080"), "listen address (AGENTHOST_ADDR)")
+	addr := flag.String("addr", env("AGENTHOST_ADDR", "0.0.0.0:80"), "listen address (AGENTHOST_ADDR)")
 	dataDir := flag.String("data", env("AGENTHOST_DATA", "./data"), "data directory (AGENTHOST_DATA)")
 	workspace := flag.String("workspace", env("AGENTHOST_WORKSPACE", "./workspace"), "default working directory for tasks (AGENTHOST_WORKSPACE)")
 	wfDir := flag.String("workflows", env("AGENTHOST_WORKFLOWS", ""), "workflow library directory (AGENTHOST_WORKFLOWS, default <data>/workflows)")
@@ -255,31 +255,52 @@ func printBanner(addr, token string) {
 }
 
 // outboundIP returns the machine's preferred outbound IP address.
-// First tries UDP connect (fast, no network), then falls back to a
-// public STUN-like endpoint for NAT environments (e.g. cloud VMs).
+// Tries multiple methods in order: public IP API, UDP route, local interfaces.
 func outboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err == nil {
+	// 1. UDP connect to get the outbound interface IP (fast, no network needed)
+	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
 		ip := conn.LocalAddr().(*net.UDPAddr).IP.String()
 		conn.Close()
-		// If it's a private IP, try to get the real public IP via HTTP.
-		if isPrivateIP(ip) {
-			if pub := publicIP(); pub != "" {
-				return pub
+		if !isPrivateIP(ip) {
+			return ip // already a public IP
+		}
+		// It's a private IP (NAT/cloud): try to get public IP from external API
+		if pub := publicIP(); pub != "" {
+			return pub
+		}
+		return ip // return the private IP rather than localhost
+	}
+
+	// 2. Walk local interfaces, pick the first non-loopback unicast IP
+	if ifaces, err := net.Interfaces(); err == nil {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			addrs, _ := iface.Addrs()
+			for _, addr := range addrs {
+				var ip net.IP
+				switch v := addr.(type) {
+				case *net.IPNet:
+					ip = v.IP
+				case *net.IPAddr:
+					ip = v.IP
+				}
+				if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+					continue
+				}
+				return ip.String()
 			}
 		}
-		return ip
 	}
+
+	// 3. Try external API as last resort
 	return publicIP()
 }
 
 // publicIP queries a lightweight public endpoint for the machine's external IP.
 func publicIP() string {
-	urls := []string{
-		"https://api4.ipify.org",
-		"https://ipv4.icanhazip.com",
-	}
-	for _, u := range urls {
+	for _, u := range []string{"https://api4.ipify.org", "https://ipv4.icanhazip.com"} {
 		c := &http.Client{Timeout: 3 * time.Second}
 		resp, err := c.Get(u)
 		if err != nil {
@@ -297,11 +318,12 @@ func publicIP() string {
 }
 
 func isPrivateIP(ip string) bool {
-	private := []string{"10.", "172.16.", "172.17.", "172.18.", "172.19.",
-		"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
-		"172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
-		"192.168.", "127.", "169.254.", "fc", "fd"}
-	for _, p := range private {
+	for _, p := range []string{
+		"10.", "127.", "169.254.", "192.168.",
+		"172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.",
+		"172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+		"fc", "fd",
+	} {
 		if strings.HasPrefix(ip, p) {
 			return true
 		}
