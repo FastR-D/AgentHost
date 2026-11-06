@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -254,14 +255,58 @@ func printBanner(addr, token string) {
 }
 
 // outboundIP returns the machine's preferred outbound IP address.
-// No packets are actually sent — UDP connect just resolves the local route.
+// First tries UDP connect (fast, no network), then falls back to a
+// public STUN-like endpoint for NAT environments (e.g. cloud VMs).
 func outboundIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		return ""
+	if err == nil {
+		ip := conn.LocalAddr().(*net.UDPAddr).IP.String()
+		conn.Close()
+		// If it's a private IP, try to get the real public IP via HTTP.
+		if isPrivateIP(ip) {
+			if pub := publicIP(); pub != "" {
+				return pub
+			}
+		}
+		return ip
 	}
-	defer conn.Close()
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	return publicIP()
+}
+
+// publicIP queries a lightweight public endpoint for the machine's external IP.
+func publicIP() string {
+	urls := []string{
+		"https://api4.ipify.org",
+		"https://ipv4.icanhazip.com",
+	}
+	for _, u := range urls {
+		c := &http.Client{Timeout: 3 * time.Second}
+		resp, err := c.Get(u)
+		if err != nil {
+			continue
+		}
+		b, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+		resp.Body.Close()
+		if err == nil {
+			if ip := strings.TrimSpace(string(b)); ip != "" {
+				return ip
+			}
+		}
+	}
+	return ""
+}
+
+func isPrivateIP(ip string) bool {
+	private := []string{"10.", "172.16.", "172.17.", "172.18.", "172.19.",
+		"172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+		"172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31.",
+		"192.168.", "127.", "169.254.", "fc", "fd"}
+	for _, p := range private {
+		if strings.HasPrefix(ip, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func fatal(msg string, err error) {
