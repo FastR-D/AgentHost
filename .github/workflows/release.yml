@@ -12,6 +12,8 @@ jobs:
   build-linux-amd64:
     name: Build linux/amd64 binary
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required to create/update GitHub Releases
     steps:
       - uses: actions/checkout@v4
 
