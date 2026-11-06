@@ -55,8 +55,8 @@ jobs:
           touch dist/$PKG/web/dist/.gitkeep
           printf "prebuilt" > dist/$PKG/web/dist/.build-hash
           # Scripts
-          cp run.sh dist/$PKG/
-          chmod +x dist/$PKG/run.sh
+          cp start.sh dist/$PKG/
+          chmod +x dist/$PKG/start.sh
           # Docker support
           cp deploy/Dockerfile deploy/entrypoint.sh dist/$PKG/
           cp docker-compose.yml dist/$PKG/

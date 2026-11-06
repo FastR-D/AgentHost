@@ -229,8 +229,22 @@ func (g *Registry) HandleConnect(w http.ResponseWriter, r *http.Request) {
 		reject = "服务器名 local 已被本机占用，请换一个名字"
 	}
 	g.mu.Lock()
-	if reject == "" && g.remotes[info.ID] != nil {
-		reject = "已有同名服务器在线：" + info.Name + "（每台服务器请用不同的名字）"
+	if reject == "" {
+		if old := g.remotes[info.ID]; old != nil {
+			// Kick the stale connection so the new one can take over.
+			g.mu.Unlock()
+			old.kick("被同名新连接取代")
+			// Wait briefly for the old serve() to exit and clean up.
+			for i := 0; i < 20; i++ {
+				time.Sleep(50 * time.Millisecond)
+				g.mu.Lock()
+				if g.remotes[info.ID] == nil {
+					break
+				}
+				g.mu.Unlock()
+			}
+			// mu is locked here
+		}
 	}
 	if reject != "" {
 		g.mu.Unlock()

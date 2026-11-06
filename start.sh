@@ -1,71 +1,125 @@
 #!/usr/bin/env bash
 # AgentHost launcher: installs missing dependencies, builds, and starts the server.
 #
-#   ./start.sh                 install deps if needed, build if sources changed, run
-#   ./start.sh --rebuild       force a rebuild of the web UI and the Go binary
-#   ./start.sh --install-only  install deps and build, but do not start
+#   ./start.sh                 install deps if needed, build if sources changed, run in foreground
+#   ./start.sh start           start in background (daemonize), print URL
+#   ./start.sh stop            stop background process
+#   ./start.sh restart         stop then start in background
+#   ./start.sh logs            tail the log file
+#   ./start.sh status          show whether background process is running
+#   ./start.sh --rebuild       force rebuild, then run in foreground
+#   ./start.sh --install-only  install deps and build only
 #   ./start.sh node --hub URL --token T [--name N] [--workspace DIR]
-#                              run this machine as a task server for a web server
-#                              (it dials out, so it can sit behind NAT / a firewall)
+#                              run as a task node (dials out, can sit behind NAT)
 #
-# Configuration comes from environment variables (all optional), or from a
-# .env file next to this script:
-#   AGENTHOST_ADDR           listen address                 (default :8080)
-#   AGENTHOST_TOKEN          access token                   (default: generated, saved in $AGENTHOST_DATA/token)
-#   AGENTHOST_AUTH=none      disable authentication (only on trusted networks!)
+# Configuration from .env or environment variables:
+#   AGENTHOST_ADDR           listen address                 (default 0.0.0.0:80)
+#   AGENTHOST_TOKEN          access token                   (default: auto-generated)
+#   AGENTHOST_AUTH=none      disable authentication
 #   AGENTHOST_DATA           data directory                 (default ./data)
 #   AGENTHOST_WORKSPACE      default task working directory (default ./workspace)
-#   AGENTHOST_WORKFLOWS      workflow library directory     (default $AGENTHOST_DATA/workflows)
-#   AGENTHOST_MODEL          default Codex model            (default: Codex config)
-#   AGENTHOST_SANDBOX        read-only | workspace-write | danger-full-access (default workspace-write)
-#   AGENTHOST_APPROVAL_POLICY   never | on-request | untrusted (default never)
-#   AGENTHOST_APPROVAL_DECISION accept | decline: reply to Codex approval requests (default decline)
-#   AGENTHOST_REASONING_SUMMARY auto | concise | detailed | none | default (default auto)
-#   AGENTHOST_MAX_RUNS       max concurrently running tasks (default 4)
-#   AGENTHOST_LOCAL_NODE=off the web server does not run tasks itself, only remote servers do
-#   AGENTHOST_NODE_TOKEN     token remote servers use to join (default: generated, $AGENTHOST_DATA/node-token)
-#   AGENTHOST_HUB / AGENTHOST_NODE_NAME   node role: web server URL and this server's name
-#   AGENTHOST_CODEX_CONFIG   extra codex -c overrides, separated by ';'  e.g. 'model_reasoning_effort="high"'
-#   CODEX_BIN                codex executable               (default codex)
-#   OPENAI_API_KEY           passed through to Codex if you authenticate with an API key
-#   GO_VERSION / NODE_MAJOR  versions to install when missing (default 1.22.10 / 20)
+#   AGENTHOST_LOCAL_NODE=off web server does not run tasks itself
+#   AGENTHOST_HUB / AGENTHOST_NODE_NAME   node role settings
+#   GO_VERSION / NODE_MAJOR  toolchain versions             (default 1.22.10 / 20)
 #   AGENTHOST_SKIP_INSTALL=1 never try to install anything
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
+PID_FILE="$ROOT/agenthost.pid"
+LOG_FILE="$ROOT/agenthost.log"
+
+# ── daemon helpers ──────────────────────────────────────────────────────────────
+
+_daemon_start() {
+  if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "[agenthost] already running (pid $(cat "$PID_FILE"))"
+    return 0
+  fi
+  _prepare_env
+  export AGENTHOST_DATA="${AGENTHOST_DATA:-$ROOT/data}"
+  export AGENTHOST_WORKSPACE="${AGENTHOST_WORKSPACE:-$ROOT/workspace}"
+  mkdir -p "$AGENTHOST_DATA" "$AGENTHOST_WORKSPACE"
+  nohup "$ROOT/bin/agenthost" >> "$LOG_FILE" 2>&1 &
+  echo $! > "$PID_FILE"
+  echo "[agenthost] started (pid $!), waiting for server..."
+  for i in $(seq 1 20); do
+    if grep -q "AgentHost is running" "$LOG_FILE" 2>/dev/null; then break; fi
+    sleep 0.5
+  done
+  grep -E "Open:|Token:|error|Error" "$LOG_FILE" 2>/dev/null | tail -5
+}
+
+_daemon_stop() {
+  if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    kill "$(cat "$PID_FILE")" && rm -f "$PID_FILE" && echo "[agenthost] stopped"
+  else
+    echo "[agenthost] not running"
+  fi
+}
+
+_daemon_status() {
+  if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+    echo "[agenthost] running (pid $(cat "$PID_FILE"))"
+  else
+    echo "[agenthost] not running"
+  fi
+}
+
+# ── argument parsing ────────────────────────────────────────────────────────────
+
 REBUILD=0
 INSTALL_ONLY=0
 ROLE=web
 NODE_ARGS=()
-if [[ "${1:-}" == "node" ]]; then
-  ROLE=node
-  shift
-  # Everything after "node" goes to `agenthost node` (--hub, --token, --name, --workspace…),
-  # except start.sh's own options.
-  for arg in "$@"; do
-    case "$arg" in
-      --rebuild) REBUILD=1 ;;
-      --install-only) INSTALL_ONLY=1 ;;
-      *) NODE_ARGS+=("$arg") ;;
-    esac
-  done
-  set --
-fi
+
+case "${1:-}" in
+  start)
+    # After building, daemonize.
+    DAEMON=1; shift ;;
+  stop)
+    _daemon_stop; exit 0 ;;
+  restart)
+    _daemon_stop; sleep 1; set -- start ;;
+  logs)
+    tail -f "$LOG_FILE"; exit 0 ;;
+  status)
+    _daemon_status; exit 0 ;;
+  node)
+    ROLE=node; shift
+    for arg in "$@"; do
+      case "$arg" in
+        --rebuild) REBUILD=1 ;;
+        --install-only) INSTALL_ONLY=1 ;;
+        *) NODE_ARGS+=("$arg") ;;
+      esac
+    done
+    set -- ;;
+  *)
+    DAEMON=0 ;;
+esac
+
 for arg in "$@"; do
   case "$arg" in
     --rebuild) REBUILD=1 ;;
     --install-only) INSTALL_ONLY=1 ;;
-    -h|--help) sed -n '2,38p' "$0"; exit 0 ;;
+    start) DAEMON=1 ;;
+    -h|--help) sed -n '2,28p' "$0"; exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
 done
 
-if [[ -f "$ROOT/.env" ]]; then
-  set -a; # shellcheck disable=SC1091
-  source "$ROOT/.env"; set +a
-fi
+DAEMON="${DAEMON:-0}"
+
+# ── env & toolchain ─────────────────────────────────────────────────────────────
+
+_prepare_env() {
+  if [[ -f "$ROOT/.env" ]]; then
+    set -a; source "$ROOT/.env"; set +a  # shellcheck disable=SC1091
+  fi
+}
+_prepare_env
 
 GO_VERSION="${GO_VERSION:-1.22.10}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
@@ -96,13 +150,13 @@ os() {
   esac
 }
 
-fetch() { # url dest
+fetch() {
   if have curl; then curl -fsSL --retry 3 -o "$2" "$1"
   elif have wget; then wget -q -O "$2" "$1"
   else die "need curl or wget to download $1"; fi
 }
 
-pkg_install() { # best-effort system packages
+pkg_install() {
   [[ "${AGENTHOST_SKIP_INSTALL:-}" == 1 ]] && return 1
   if have apt-get; then $SUDO apt-get update -qq && DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq "$@"
   elif have apk; then $SUDO apk add --no-cache "$@"
@@ -124,7 +178,7 @@ ensure_basics() {
   fi
 }
 
-version_ge() { # a >= b (dotted)
+version_ge() {
   [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -1)" == "$2" ]]
 }
 
@@ -160,10 +214,10 @@ ensure_node() {
   tar -C "$TOOLS/node" --strip-components=1 -xzf "$TOOLS/node.tgz" && rm -f "$TOOLS/node.tgz"
 }
 
+isOff() { [[ "${1,,}" == "off" || "${1,,}" == "false" || "$1" == "0" ]]; }
+
 ensure_codex() {
-  # Skip when this instance won't run tasks locally (web-only mode).
-  isOff() { [[ "${1,,}" == "off" || "${1,,}" == "false" || "$1" == "0" ]]; }
-  if isOff "${AGENTHOST_LOCAL_NODE:-}"; then return; fi
+  isOff "${AGENTHOST_LOCAL_NODE:-}" && return
   local bin="${CODEX_BIN:-codex}"
   if have "$bin"; then return; fi
   [[ "${AGENTHOST_SKIP_INSTALL:-}" == 1 ]] && { warn "Codex CLI not found; tasks will fail until it is installed"; return; }
@@ -175,19 +229,16 @@ ensure_codex() {
 }
 
 check_codex_auth() {
-  # Skip when this instance won't run tasks locally (web-only mode).
-  isOff() { [[ "${1,,}" == "off" || "${1,,}" == "false" || "$1" == "0" ]]; }
-  if isOff "${AGENTHOST_LOCAL_NODE:-}"; then return; fi
+  isOff "${AGENTHOST_LOCAL_NODE:-}" && return
   local bin="${CODEX_BIN:-codex}"
   have "$bin" || return 0
   local home="${CODEX_HOME:-$HOME/.codex}"
   if [[ -z "${OPENAI_API_KEY:-}" && ! -f "$home/auth.json" && ! -f "$home/config.toml" ]]; then
-    warn "Codex does not look configured (no $home/auth.json, $home/config.toml or OPENAI_API_KEY)."
-    warn "Run 'codex login' (or 'printenv OPENAI_API_KEY | codex login --with-api-key'), or mount your ~/.codex."
+    warn "Codex does not look configured (no OPENAI_API_KEY, $home/auth.json or config.toml)."
+    warn "Run 'codex login' or set OPENAI_API_KEY, or configure it via the web settings page."
   fi
 }
 
-# Hash of everything that affects a build, to skip rebuilding when nothing changed.
 src_hash() {
   find "$@" -type f \( -name '*.go' -o -name '*.ts' -o -name '*.tsx' -o -name '*.css' -o -name '*.html' \
     -o -name '*.json' -o -name '*.js' -o -name '*.md' -o -name 'go.mod' -o -name 'go.sum' \) \
@@ -199,8 +250,7 @@ build_web() {
   local stamp="$ROOT/web/dist/.build-hash" h
   h="$(cd "$ROOT" && src_hash web/src web/index.html web/package.json web/vite.config.ts web/tailwind.config.js)"
   if [[ $REBUILD == 0 && -f "$ROOT/web/dist/index.html" && -f "$stamp" && "$(cat "$stamp")" == "$h" ]]; then
-    log "web UI is up to date"
-    return
+    log "web UI is up to date"; return
   fi
   if (cd "$ROOT/web" && [[ -d node_modules ]] && npm ls --depth=0 >/dev/null 2>&1); then
     log "web dependencies already installed"
@@ -219,22 +269,21 @@ build_go() {
   local stamp="$ROOT/bin/.build-hash" h
   h="$(cd "$ROOT" && src_hash cmd internal tasks go.mod go.sum assets.go)-$(cat "$ROOT/web/dist/.build-hash" 2>/dev/null)"
   if [[ $REBUILD == 0 && -x "$ROOT/bin/agenthost" && -f "$stamp" && "$(cat "$stamp")" == "$h" ]]; then
-    log "server binary is up to date"
-    return
+    log "server binary is up to date"; return
   fi
-  # If no source files are found (e.g. a release package), skip rebuilding.
+  # No source found (release package) — use pre-built binary as-is.
   if [[ $REBUILD == 0 && -x "$ROOT/bin/agenthost" ]] && \
      ! find "$ROOT" -maxdepth 3 -name '*.go' -not -path '*/.tools/*' -quit 2>/dev/null | grep -q .; then
-    log "no source found; using pre-built binary at $ROOT/bin/agenthost"
-    return
+    log "no source found; using pre-built binary at $ROOT/bin/agenthost"; return
   fi
   log "building server"
   mkdir -p "$ROOT/bin"
-  # Target the host explicitly: the installed Go may itself be an emulated build for another arch.
   (cd "$ROOT" && CGO_ENABLED=0 GOOS="$(os)" GOARCH="$(arch)" GOFLAGS="${GOFLAGS:--mod=mod}" \
     go build -trimpath -ldflags "-s -w" -o bin/agenthost ./cmd/agenthost)
   echo "$h" > "$stamp"
 }
+
+# ── main ────────────────────────────────────────────────────────────────────────
 
 ensure_basics
 ensure_go
@@ -247,8 +296,7 @@ build_web
 build_go
 
 if [[ $INSTALL_ONLY == 1 ]]; then
-  log "install complete: $ROOT/bin/agenthost"
-  exit 0
+  log "install complete: $ROOT/bin/agenthost"; exit 0
 fi
 
 if [[ $ROLE == node ]]; then
@@ -262,5 +310,11 @@ fi
 export AGENTHOST_DATA="${AGENTHOST_DATA:-$ROOT/data}"
 export AGENTHOST_WORKSPACE="${AGENTHOST_WORKSPACE:-$ROOT/workspace}"
 mkdir -p "$AGENTHOST_DATA" "$AGENTHOST_WORKSPACE"
-log "starting AgentHost on ${AGENTHOST_ADDR:-:8080}"
+
+if [[ $DAEMON == 1 ]]; then
+  _daemon_start
+  exit 0
+fi
+
+log "starting AgentHost on ${AGENTHOST_ADDR:-0.0.0.0:80}"
 exec "$ROOT/bin/agenthost"
