@@ -4,7 +4,7 @@ import { api } from "../api";
 import { useStore, guard, navigate, useCurrentNode } from "../store";
 import { WhereChip } from "./DirPicker";
 import { TaskSheet, taskWhere, tasksFor, useTasks } from "./TaskSheet";
-import { ParallelChip } from "./Parallel";
+import { ParallelChip, isMultiParallel, parallelLabel } from "./Parallel";
 
 const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
@@ -104,9 +104,9 @@ export function HomeView() {
                       <span className="truncate font-medium">{t.title}</span>
                       <Play className="ml-auto h-3.5 w-3.5 shrink-0 text-faint md:opacity-0 md:group-hover:opacity-100" />
                     </div>
-                    {(at || (t.parallel ?? 0) > 1) && (
+                    {(at || isMultiParallel(t.parallel)) && (
                       <div className="mt-0.5 truncate font-mono text-[11px] text-faint">
-                        {[at, (t.parallel ?? 0) > 1 ? `${t.parallel} 个 Codex 并行` : ""].filter(Boolean).join(" · ")}
+                        {[at, isMultiParallel(t.parallel) ? parallelLabel(t.parallel) : ""].filter(Boolean).join(" · ")}
                       </div>
                     )}
                     <div className="mt-1 line-clamp-2 text-[12px] text-muted">{t.body}</div>

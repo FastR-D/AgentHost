@@ -5,7 +5,7 @@ import { api } from "../api";
 import { navigate, toast, useCurrentNode, useStore } from "../store";
 import type { SkillScan, Task } from "../types";
 import { Sheet } from "./DirPicker";
-import { ParallelChip } from "./Parallel";
+import { ParallelChip, isMultiParallel, parallelLabel } from "./Parallel";
 
 let cache: Task[] | null = null;
 
@@ -196,9 +196,9 @@ export function TaskSheet({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[14px] font-medium">{t.title}</span>
-                  {(at || (t.parallel ?? 0) > 1) && (
+                  {(at || isMultiParallel(t.parallel)) && (
                     <span className="block truncate font-mono text-[11.5px] text-faint">
-                      {[at, (t.parallel ?? 0) > 1 ? `${t.parallel} 个 Codex 并行` : ""].filter(Boolean).join(" · ")}
+                      {[at, isMultiParallel(t.parallel) ? parallelLabel(t.parallel) : ""].filter(Boolean).join(" · ")}
                     </span>
                   )}
                   <span className="line-clamp-2 text-[12.5px] text-muted">{t.body}</span>

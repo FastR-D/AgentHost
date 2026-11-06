@@ -58,8 +58,8 @@ jobs:
           # Config example & example tasks
           cp .env.example dist/$PKG/
           cp -r tasks dist/$PKG/tasks
-          # Minimal README
-          cp README.md dist/$PKG/
+          # Docs: deployment guide + main README
+          cp DEPLOY.md README.md dist/$PKG/
           tar -C dist -czf dist/$PKG.tar.gz $PKG/
 
       - name: Upload build artifact
@@ -74,5 +74,5 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/agenthost-linux-amd64.tar.gz
-          generate_release_notes: true
+          body_path: DEPLOY.md
           fail_on_unmatched_files: true

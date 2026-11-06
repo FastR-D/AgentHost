@@ -7,7 +7,7 @@ import type { Task } from "../types";
 import { fmtRelative } from "../lib/format";
 import { WhereChip } from "./DirPicker";
 import { RepoSkills, invalidateTasks, taskWhere, tasksFor } from "./TaskSheet";
-import { ParallelChip } from "./Parallel";
+import { ParallelChip, isMultiParallel, parallelLabel, PARALLEL_UNLIMITED } from "./Parallel";
 
 const EMPTY: Task = { name: "", title: "", node: "", cwd: "", parallel: 0, body: "", updatedAt: "" };
 
@@ -130,7 +130,7 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
       <div>
         <span className="text-[13px] text-muted">同时用几个 Codex</span>
         <div className="mt-1">
-          <ParallelChip value={t.parallel} onChange={(n) => setT({ ...t, parallel: n > 1 ? n : 0 })} />
+          <ParallelChip value={t.parallel} onChange={(n) => setT({ ...t, parallel: n === PARALLEL_UNLIMITED ? PARALLEL_UNLIMITED : n > 1 ? n : 0 })} />
         </div>
       </div>
 
@@ -213,7 +213,7 @@ export function TaskLibView({ name }: { name?: string }) {
                 <div className="line-clamp-2 text-[12.5px] text-muted">{t.body}</div>
                 <div className="mt-0.5 truncate text-[11px] text-faint">
                   {at && <span className="font-mono">{at} · </span>}
-                  {(t.parallel ?? 0) > 1 && <span>{t.parallel} 个 Codex 并行 · </span>}
+                  {isMultiParallel(t.parallel) && <span>{parallelLabel(t.parallel)} · </span>}
                   {fmtRelative(t.updatedAt)}更新
                 </div>
               </button>

@@ -7,6 +7,7 @@ import { closeProcess, control, openProcess, useStore } from "../store";
 import { Elapsed, StatusBadge, StatusIcon, between, fmtDuration, fmtTokens, statusLabel } from "../lib/format";
 import { ItemView } from "./ItemView";
 import { Sheet } from "./DirPicker";
+import { isMultiParallel, parallelLabel } from "./Parallel";
 import { ProgressBar, RunControls, StepCard, progressUnits, useRun } from "./StepCard";
 
 /** Tokens of a run, sub-agents included. */
@@ -70,7 +71,7 @@ export function TaskBar({ run }: { run: Run }) {
               {active ? (
                 <>
                   后台执行中 · <Elapsed start={run.startedAt ?? run.createdAt} running />
-                  {(run.parallel ?? 0) > 1 && <> · 最多 {run.parallel} 个 Codex 并行</>}
+                  {isMultiParallel(run.parallel) && <> · {parallelLabel(run.parallel)}</>}
                 </>
               ) : (
                 [summary(run), tokens ? `${fmtTokens(tokens)} tokens` : ""].filter(Boolean).join(" · ")

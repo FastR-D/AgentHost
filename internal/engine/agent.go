@@ -336,7 +336,11 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 	args := e.codexArgsFor(nd, r.Network, r.WritableRoots...)
 	if n := r.Parallel; n > 1 && r.Kind != KindManager {
 		// Codex's own sub-agents; the limit counts them, not the coordinating agent.
-		args = append(args, "-c", "features.multi_agent=true", "-c", fmt.Sprintf("agents.max_concurrent_threads_per_session=%d", n))
+		args = append(args, "-c", "features.multi_agent=true")
+		if n != parallelUnlimited {
+			args = append(args, "-c", fmt.Sprintf("agents.max_concurrent_threads_per_session=%d", n))
+		}
+		// parallelUnlimited: omit the cap entirely — Codex decides how many to spawn.
 	}
 	client, err := codex.Start(ctx, codex.Options{Node: nd, Bin: e.codexBin(nd), ExtraArgs: args, Env: e.extraEnv(nd), Cwd: st.Cwd, Experimental: true}, h)
 	if err != nil {

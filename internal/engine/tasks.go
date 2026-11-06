@@ -131,7 +131,10 @@ func parseTask(name string, b []byte) Task {
 			t.Title = pick(m, "名称", "标题", "title", "name")
 			t.Node = pick(m, "服务器", "server", "node")
 			t.Cwd = pick(m, "目录", "cwd", "dir")
-			if n, err := strconv.Atoi(pick(m, "并行", "parallel")); err == nil {
+			pval := pick(m, "并行", "parallel")
+			if pval == "不限" || pval == "unlimited" || pval == "auto" {
+				t.Parallel = parallelUnlimited
+			} else if n, err := strconv.Atoi(pval); err == nil {
 				t.Parallel = clampParallel(n)
 			}
 			text = body
@@ -151,11 +154,21 @@ type taskFront struct {
 	Title    string `yaml:"名称"`
 	Node     string `yaml:"服务器,omitempty"`
 	Cwd      string `yaml:"目录,omitempty"`
-	Parallel int    `yaml:"并行,omitempty"`
+	Parallel any    `yaml:"并行,omitempty"` // int or "不限"
+}
+
+func parallelFrontVal(n int) any {
+	if n == parallelUnlimited {
+		return "不限"
+	}
+	if n <= 1 {
+		return nil
+	}
+	return n
 }
 
 func renderTask(t Task) []byte {
-	y, _ := yaml.Marshal(taskFront{Title: t.Title, Node: t.Node, Cwd: t.Cwd, Parallel: clampParallel(t.Parallel)})
+	y, _ := yaml.Marshal(taskFront{Title: t.Title, Node: t.Node, Cwd: t.Cwd, Parallel: parallelFrontVal(t.Parallel)})
 	return []byte("---\n" + string(y) + "---\n\n" + strings.TrimSpace(t.Body) + "\n")
 }
 

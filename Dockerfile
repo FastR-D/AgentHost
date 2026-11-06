@@ -10,9 +10,8 @@ RUN npm run build
 
 
 # ── Stage 2: build the Go binary ─────────────────────────────────────────────
-# TARGETOS / TARGETARCH are injected by BuildKit from `docker build --platform`.
-# Plain `docker build .` builds for the host arch; CI passes
-# `--platform linux/amd64` to produce the x86 linux release binary.
+# Build on the build host's native arch (BUILDPLATFORM) and cross-compile via
+# GOOS/GOARCH — far faster than running `go build` under QEMU emulation.
 FROM --platform=$BUILDPLATFORM golang:1.22-bookworm AS go-builder
 
 ARG TARGETOS=linux
@@ -20,7 +19,6 @@ ARG TARGETARCH
 
 WORKDIR /build
 
-# Download Go modules first for better layer caching.
 COPY go.mod go.sum ./
 RUN go mod download
 
@@ -33,43 +31,41 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     -o /agenthost ./cmd/agenthost
 
 
-# ── Stage 3: minimal runtime image ────────────────────────────────────────────
-# We copy Node.js from the official image instead of apt-get install,
-# which avoids pulling 300+ Debian npm packages and their network round-trips.
-FROM node:20-slim AS node-provider
-# npm 10.x skips platform-alias optionalDependencies automatically.
-# We install the main package first, then read its optionalDependencies
-# to install the correct platform binary (e.g. codex-linux-arm64).
+# ── Stage 3: runtime — ubuntu 24.04 dev container ────────────────────────────
+# AgentHost runs here, and so do all Codex CLI tasks.
+# Using ubuntu:24.04 gives tasks a full dev environment (apt, python, git, …).
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System packages
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git \
+      bubblewrap \
+      python3 python3-pip \
+      build-essential \
+      procps iproute2 \
+      sudo \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Node.js 20 from NodeSource (ubuntu 24.04 ships 18 which is fine too,
+# but 20 matches the web-builder and the Codex CLI requirement).
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y --no-install-recommends nodejs \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Install the Codex CLI + platform-native binary.
+# npm 10.x silently skips platform-alias optionalDependencies, so we
+# install the main package and then the arch-specific one explicitly.
 RUN npm install -g --no-audit --no-fund @openai/codex \
  && node -e " \
       const p=require('/usr/local/lib/node_modules/@openai/codex/package.json'); \
       const key='@openai/codex-linux-'+process.arch; \
       const val=(p.optionalDependencies||{})[key]; \
       if(val) process.stdout.write(key+'@'+val); \
-    " | xargs -r npm install -g --no-audit --no-fund
-
-FROM debian:bookworm-slim
-
-# Runtime deps (small list – no nodejs/npm from apt):
-#   ca-certificates – HTTPS from the binary
-#   curl            – healthcheck
-#   git             – Codex needs it for diffs / commits
-#   bubblewrap      – Codex sandbox (workspace-write mode)
-#   python3         – some Codex tasks
-#   procps          – ps, used by task cleanup logic
-RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git bubblewrap python3 procps \
- && apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Copy Node.js runtime + pre-installed codex CLI from node-provider.
-# We copy node_modules directly and recreate the /usr/local/bin/codex
-# symlink manually — a plain COPY dereferences symlinks, which breaks
-# codex's require.resolve-based platform-package lookup.
-COPY --from=node-provider /usr/local/bin/node            /usr/local/bin/node
-COPY --from=node-provider /usr/local/lib/node_modules    /usr/local/lib/node_modules
-RUN ln -sf /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
- && chmod +x /usr/local/bin/codex
+    " | xargs -r npm install -g --no-audit --no-fund \
+ && ln -sf /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
 
 COPY --from=go-builder /agenthost /usr/local/bin/agenthost
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh

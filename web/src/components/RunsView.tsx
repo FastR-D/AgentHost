@@ -8,6 +8,7 @@ import { isActive } from "../types";
 import { StatusBadge, Elapsed, fmtTime, statusLabel } from "../lib/format";
 import { Sheet } from "./DirPicker";
 import { ProgressBar, RunControls, progressUnits } from "./StepCard";
+import { isMultiParallel, parallelLabel } from "./Parallel";
 
 const filters = [
   { key: "all", label: "全部" },
@@ -236,9 +237,9 @@ export function RunsView() {
                   <span>
                     {fmtTime(r.createdAt)} · <Elapsed start={r.startedAt} end={r.endedAt} running={active} />
                   </span>
-                  {(r.parallel ?? 0) > 1 && (
+                  {isMultiParallel(r.parallel) && (
                     <span className="chip !border-info/30 !text-info">
-                      <Users className="h-3 w-3" /> {r.parallel} 个 Codex
+                      <Users className="h-3 w-3" /> {parallelLabel(r.parallel)}
                     </span>
                   )}
                   {r.taskTitle && <span className="chip max-w-[60vw] truncate">任务 · {r.taskTitle}</span>}

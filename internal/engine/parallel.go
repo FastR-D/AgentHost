@@ -10,10 +10,15 @@ import (
 // the same app-server process, each on its own thread. AgentHost limits how
 // many run at once and shows each one's progress.
 
-const maxParallel = 8
+// parallelUnlimited is the sentinel meaning "let Codex decide; no cap".
+// It maps to 0 in the DB / wire format (stored as-is after clamp).
+const parallelUnlimited = -1
+const maxParallel = 64 // hard safety ceiling
 
 func clampParallel(n int) int {
 	switch {
+	case n == parallelUnlimited:
+		return parallelUnlimited
 	case n <= 1:
 		return 0
 	case n > maxParallel:
@@ -23,6 +28,9 @@ func clampParallel(n int) int {
 }
 
 func parallelHint(n int) string {
+	if n == parallelUnlimited {
+		return `【AgentHost】这个任务允许你用尽可能多的子 agent（spawn_agent）并行。请把任务拆成能独立完成、互不冲突的几部分（不要让两个子 agent 改同一个文件），交给子 agent 同时去做，子 agent 的名字（task_name）用简短的英文描述它负责的部分；你负责分派、等待（wait）、检查和汇总，最后给出整体结果。如果用了 report_progress，就用它列出你拆出的几部分。确实没法拆开的任务就自己做。`
+	}
 	return fmt.Sprintf(`【AgentHost】这个任务可以多个 Codex 同时做：最多同时派 %d 个子 agent（spawn_agent）。
 请先把任务拆成能独立完成、互不冲突的几部分（不要让两个子 agent 改同一个文件），交给子 agent 同时去做，子 agent 的名字（task_name）用简短的英文描述它负责的部分；你负责分派、等待（wait）、检查和汇总，最后给出整体结果。如果用了 report_progress，就用它列出你拆出的几部分。确实没法拆开的任务就自己做。`, n)
 }
