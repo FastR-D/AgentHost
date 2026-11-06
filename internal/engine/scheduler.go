@@ -352,6 +352,11 @@ func (e *Engine) execStep(r *Run, rc *runCtl, st *Step, ctl *stepCtl) {
 			e.hub.Publish("item", itemEvent(r, st, it))
 		}
 	}
+	for _, a := range st.Agents {
+		if a.Status == "running" {
+			a.Status, a.EndedAt, a.Activity = "stopped", st.EndedAt, ""
+		}
+	}
 	delete(rc.steps, st.ID)
 	r.Activity = e.runActivity(r)
 	e.touchRun(r)
@@ -428,8 +433,8 @@ func (e *Engine) upsertItem(r *Run, st *Step, it *Item) {
 		e.hub.Publish("item", itemEvent(r, st, it))
 	}
 	it.Output = keepTail(it.Output, maxOutput)
-	if it.Status == "running" {
-		e.setStepActivity(r, st, activityFor(it))
+	if it.Status == "running" && it.ThreadID == "" {
+		e.setStepActivity(r, st, withAgents(st, activityFor(it)))
 	}
 }
 
@@ -443,9 +448,14 @@ type deltaPayload struct {
 
 // appendDelta streams text into an item field, creating the item if needed.
 func (e *Engine) appendDelta(r *Run, st *Step, itemID, kind, field, delta string) {
+	e.appendDeltaOn(r, st, "", itemID, kind, field, delta)
+}
+
+// appendDeltaOn is appendDelta for an item of a thread ("" = the step's own).
+func (e *Engine) appendDeltaOn(r *Run, st *Step, thread, itemID, kind, field, delta string) {
 	it := findItem(st, itemID)
 	if it == nil {
-		it = &Item{ID: itemID, Kind: kind, Status: "running", StartedAt: now()}
+		it = &Item{ID: itemID, Kind: kind, Status: "running", StartedAt: now(), ThreadID: thread}
 		e.addItemLocked(r, st, it)
 	}
 	switch field {
@@ -462,8 +472,8 @@ func (e *Engine) appendDelta(r *Run, st *Step, itemID, kind, field, delta string
 	}
 	e.dirtyRuns[r.ID] = true
 	e.hub.Publish("delta", &deltaPayload{RunID: r.ID, StepID: st.ID, ItemID: itemID, Field: field, Delta: delta})
-	if it.Status == "running" {
-		e.setStepActivity(r, st, activityFor(it))
+	if it.Status == "running" && it.ThreadID == "" {
+		e.setStepActivity(r, st, withAgents(st, activityFor(it)))
 	}
 }
 

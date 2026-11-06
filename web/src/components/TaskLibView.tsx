@@ -7,8 +7,9 @@ import type { Task } from "../types";
 import { fmtRelative } from "../lib/format";
 import { WhereChip } from "./DirPicker";
 import { RepoSkills, invalidateTasks, taskWhere, tasksFor } from "./TaskSheet";
+import { ParallelChip } from "./Parallel";
 
-const EMPTY: Task = { name: "", title: "", node: "", cwd: "", body: "", updatedAt: "" };
+const EMPTY: Task = { name: "", title: "", node: "", cwd: "", parallel: 0, body: "", updatedAt: "" };
 
 function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task) => void; onDeleted: () => void }) {
   const isNew = name === "new";
@@ -22,7 +23,7 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
   // New tasks belong to the current server; the examples work on any server.
   const node = isNew ? current : t.node || current;
   const workspace = useStore((s) => s.nodes.find((n) => n.id === node)?.workspace);
-  const dirty = t.title !== orig.title || t.body !== orig.body || (t.node ?? "") !== (orig.node ?? "") || (t.cwd ?? "") !== (orig.cwd ?? "");
+  const dirty = t.title !== orig.title || t.body !== orig.body || (t.node ?? "") !== (orig.node ?? "") || (t.cwd ?? "") !== (orig.cwd ?? "") || (t.parallel ?? 0) !== (orig.parallel ?? 0);
 
   useEffect(() => {
     if (isNew) {
@@ -44,7 +45,7 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
 
   const save = async () => {
     setSaving(true);
-    const fields = { title: t.title, node: isNew || t.cwd ? node : t.node ?? "", cwd: t.cwd ?? "", body: t.body };
+    const fields = { title: t.title, node: isNew || t.cwd ? node : t.node ?? "", cwd: t.cwd ?? "", parallel: t.parallel ?? 0, body: t.body };
     const res = await guard(isNew ? api.createSavedTask(fields) : api.saveTask(name, fields));
     setSaving(false);
     if (res) {
@@ -126,6 +127,13 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
         <span className="mt-1 block text-[11.5px] text-faint">一般选代码所在的目录，Codex 会在那里干活，也会用上那份代码里的技能。</span>
       </div>
 
+      <div>
+        <span className="text-[13px] text-muted">同时用几个 Codex</span>
+        <div className="mt-1">
+          <ParallelChip value={t.parallel} onChange={(n) => setT({ ...t, parallel: n > 1 ? n : 0 })} />
+        </div>
+      </div>
+
       <label className="block">
         <span className="text-[13px] text-muted">要做什么</span>
         <textarea
@@ -205,6 +213,7 @@ export function TaskLibView({ name }: { name?: string }) {
                 <div className="line-clamp-2 text-[12.5px] text-muted">{t.body}</div>
                 <div className="mt-0.5 truncate text-[11px] text-faint">
                   {at && <span className="font-mono">{at} · </span>}
+                  {(t.parallel ?? 0) > 1 && <span>{t.parallel} 个 Codex 并行 · </span>}
                   {fmtRelative(t.updatedAt)}更新
                 </div>
               </button>

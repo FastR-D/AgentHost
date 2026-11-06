@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Bot, LayoutList, Workflow as WorkflowIcon } from "lucide-react";
-import { useStore, navigate, useCurrentNode } from "../store";
-import type { Run } from "../types";
+import { Bot, Eraser, LayoutList, Loader2, Trash2, Users, Workflow as WorkflowIcon } from "lucide-react";
+import { api } from "../api";
+import { guard, isTaskRun, navigate, nodeName, toast, useCurrentNode, useStore } from "../store";
+import type { Run, RunStats } from "../types";
 import { isActive } from "../types";
 import { StatusBadge, Elapsed, fmtTime, statusLabel } from "../lib/format";
+import { Sheet } from "./DirPicker";
 import { ProgressBar, RunControls, progressUnits } from "./StepCard";
 
 const filters = [
@@ -14,52 +16,176 @@ const filters = [
   { key: "failed", label: "失败" },
   { key: "stopped", label: "已停止" },
 ] as const;
+type Filter = (typeof filters)[number]["key"];
 
-/** Every run across sessions, with status, progress and remote controls. */
-export function RunsView() {
-  const runs = useStore((s) => s.runs);
-  const sessions = useStore((s) => s.sessions);
-  const [filter, setFilter] = useState<(typeof filters)[number]["key"]>("all");
-  const [showChildren, setShowChildren] = useState(false);
-  const current = useCurrentNode();
+const PAGE = 30;
 
-  const list = useMemo(() => {
-    return Object.values(runs)
-      .filter((r) => r.nodeId === current && r.kind !== "manager")
-      .filter((r) => showChildren || !r.parentRunId)
-      .filter((r) => {
-        if (filter === "all") return true;
-        if (filter === "active") return isActive(r.status);
-        return r.status === filter;
-      })
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-  }, [runs, filter, showChildren, current]);
+const matches = (r: Run, f: Filter) => (f === "all" ? true : f === "active" ? isActive(r.status) : r.status === f);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const r of Object.values(runs)) {
-      if (r.parentRunId || r.nodeId !== current || r.kind === "manager") continue;
-      c[r.status] = (c[r.status] ?? 0) + 1;
-      if (isActive(r.status)) c.active = (c.active ?? 0) + 1;
+/** Delete old records, now or automatically. */
+function CleanupSheet({ node, onDone, onClose }: { node: string; onDone: () => void; onClose: () => void }) {
+  const options = [
+    { days: 7, label: "删除 7 天前的" },
+    { days: 30, label: "删除 30 天前的" },
+    { days: 0, label: "删除全部已结束的" },
+  ];
+  const [counts, setCounts] = useState<Record<number, number>>({});
+  const [busy, setBusy] = useState<number | null>(null);
+  const [keep, setKeep] = useState<number | null>(null);
+  useEffect(() => {
+    for (const o of options) api.cleanupRuns(node, o.days, true).then((r) => setCounts((c) => ({ ...c, [o.days]: r.count })));
+    api.settings().then((s) => setKeep(s.runs?.retentionDays ?? 0));
+  }, [node]);
+
+  const clean = async (days: number) => {
+    const n = counts[days] ?? 0;
+    if (!n || !confirm(`删除「${nodeName(node)}」上 ${n} 条已结束的运行记录？它们的对话内容和日志也会删除，不能恢复。`)) return;
+    setBusy(days);
+    const r = await guard(api.cleanupRuns(node, days));
+    setBusy(null);
+    if (r) {
+      toast(`已删除 ${r.count} 条`, "info");
+      onDone();
+      onClose();
     }
-    return c;
-  }, [runs, current]);
+  };
+  const saveKeep = async (days: number) => {
+    const res = await guard(api.saveSettings({ runs: { retentionDays: days } }));
+    if (res) {
+      setKeep(days);
+      toast(days ? `已设置：自动删除 ${days} 天前的记录` : "已关闭自动清理", "info");
+    }
+  };
 
-  const hasChildren = useMemo(() => Object.values(runs).some((r) => r.parentRunId), [runs]);
+  return (
+    <Sheet
+      title={
+        <span className="flex items-center gap-2">
+          <Eraser className="h-4 w-4 text-info" /> 清理运行记录
+        </span>
+      }
+      onClose={onClose}
+    >
+      <div className="space-y-4 p-4">
+        <div className="space-y-1.5">
+          {options.map((o) => (
+            <button
+              key={o.days}
+              disabled={!counts[o.days] || busy !== null}
+              onClick={() => clean(o.days)}
+              className="flex w-full items-center gap-2 rounded-xl border border-line px-3 py-3 text-left text-[14px] hover:border-bad/40 hover:bg-bad/5 disabled:opacity-50 disabled:hover:border-line disabled:hover:bg-transparent"
+            >
+              {busy === o.days ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4 text-muted" />}
+              <span className="flex-1">{o.label}</span>
+              <span className="text-[12.5px] text-faint">{counts[o.days] === undefined ? "…" : `${counts[o.days]} 条`}</span>
+            </button>
+          ))}
+          <p className="px-1 text-[11.5px] leading-relaxed text-faint">
+            只删除这台服务器上已经结束的任务；正在运行的不动。某个会话的记录全删光时，会话也一起删除。
+          </p>
+        </div>
+        <div className="border-t border-line pt-3">
+          <div className="mb-2 text-[13px] font-medium">自动清理（所有服务器）</div>
+          <div className="grid grid-cols-4 gap-1.5">
+            {[0, 7, 30, 90].map((d) => (
+              <button
+                key={d}
+                disabled={keep === null}
+                onClick={() => saveKeep(d)}
+                className={clsx(
+                  "rounded-lg border py-2 text-[13px]",
+                  keep === d ? "border-info bg-info/10 font-medium text-info" : "border-line hover:bg-sunken",
+                )}
+              >
+                {d ? `保留 ${d} 天` : "不清理"}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 px-1 text-[11.5px] text-faint">开启后，每小时检查一次，删除结束时间早于这个天数的记录。</p>
+        </div>
+      </div>
+    </Sheet>
+  );
+}
+
+/** Every task run on the current server, newest first, a page at a time. */
+export function RunsView() {
+  const live = useStore((s) => s.runs);
+  const deleted = useStore((s) => s.deletedRuns);
+  const sessions = useStore((s) => s.sessions);
+  const current = useCurrentNode();
+  const [filter, setFilter] = useState<Filter>("all");
+  const [fetched, setFetched] = useState<Run[]>([]);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [stats, setStats] = useState<RunStats | null>(null);
+  const [cleanup, setCleanup] = useState(false);
+  const gen = useRef(0);
+
+  const load = async (more: boolean) => {
+    const g = more ? gen.current : ++gen.current;
+    setLoading(true);
+    try {
+      const before = more && fetched.length ? fetched[fetched.length - 1].createdAt : undefined;
+      const page = await api.runs({ node: current, tasks: true, status: filter === "all" ? undefined : filter, limit: PAGE, before });
+      if (g !== gen.current) return; // the filter or server changed meanwhile
+      setFetched(more ? [...fetched, ...page] : page);
+      setHasMore(page.length === PAGE);
+    } catch (e: any) {
+      toast(e.message);
+    } finally {
+      if (g === gen.current) setLoading(false);
+    }
+  };
+  const loadStats = () => api.runStats(current).then(setStats).catch(() => undefined);
+  useEffect(() => {
+    setFetched([]);
+    void load(false);
+    void loadStats();
+  }, [current, filter]);
+
+  // Refresh the counts when runs start, finish or go away.
+  const liveKey = useMemo(
+    () => Object.values(live).filter((r) => r.nodeId === current && isTaskRun(r)).map((r) => r.id + r.status).join() + Object.keys(deleted).length,
+    [live, deleted, current],
+  );
+  useEffect(() => {
+    const t = setTimeout(loadStats, 600);
+    return () => clearTimeout(t);
+  }, [liveKey]);
+
+  // Pages from the server, kept fresh with live updates; new runs appear on top.
+  const list = useMemo(() => {
+    const byId = new Map<string, Run>();
+    for (const r of fetched) byId.set(r.id, live[r.id] ?? r);
+    const oldest = fetched.length ? fetched[fetched.length - 1].createdAt : "";
+    for (const r of Object.values(live)) {
+      if (r.nodeId !== current || !isTaskRun(r) || byId.has(r.id)) continue;
+      if (hasMore && oldest && r.createdAt < oldest) continue; // would leave a gap
+      byId.set(r.id, r);
+    }
+    return [...byId.values()]
+      .filter((r) => !deleted[r.id] && matches(r, filter))
+      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  }, [fetched, live, deleted, current, filter, hasMore]);
 
   const open = (r: Run) => {
-    const target = r.parentRunId ? runs[r.parentRunId] ?? r : r;
-    sessionStorage.setItem("agenthost.scrollTo", target.id);
+    sessionStorage.setItem("agenthost.scrollTo", r.id);
     navigate({ page: "session", id: r.sessionId });
   };
+  const remove = async (r: Run) => {
+    if (!confirm(`删除运行记录「${r.title}」？对话里的这次任务和它的日志会一起删除。`)) return;
+    if (await guard(api.deleteRun(r.id))) setFetched((l) => l.filter((x) => x.id !== r.id));
+  };
+  const count = (k: Filter) => (k === "all" ? stats?.total : k === "active" ? stats?.active : stats?.counts[k]);
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-5xl px-3 py-4 md:px-6 md:py-6">
-        <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div className="mb-4 flex items-center gap-3">
           <LayoutList className="hidden h-5 w-5 md:block" />
           <h1 className="hidden text-lg font-semibold md:block">运行记录</h1>
-          <div className="flex max-w-full overflow-x-auto rounded-lg bg-sunken p-0.5 text-[12.5px] [scrollbar-width:none]">
+          <div className="flex min-w-0 overflow-x-auto rounded-lg bg-sunken p-0.5 text-[12.5px] [scrollbar-width:none]">
             {filters.map((f) => (
               <button
                 key={f.key}
@@ -67,24 +193,26 @@ export function RunsView() {
                 className={clsx("shrink-0 rounded-md px-3 py-1.5 md:py-1", filter === f.key ? "bg-bg shadow-sm" : "text-muted hover:text-fg")}
               >
                 {f.label}
-                {f.key !== "all" && counts[f.key] ? <span className="ml-1 text-faint">{counts[f.key]}</span> : null}
+                {count(f.key) ? <span className="ml-1 text-faint">{count(f.key)}</span> : null}
               </button>
             ))}
           </div>
-          {hasChildren && (
-            <label className="ml-auto flex items-center gap-1.5 text-[12.5px] text-muted">
-              <input type="checkbox" checked={showChildren} onChange={(e) => setShowChildren(e.target.checked)} />
-              显示子 workflow
-            </label>
-          )}
+          <button className="btn-ghost ml-auto shrink-0 !px-2" onClick={() => setCleanup(true)} title="清理旧记录">
+            <Eraser className="h-4 w-4" /> <span className="hidden sm:inline">清理</span>
+          </button>
         </div>
 
-        {list.length === 0 && <div className="rounded-xl border border-dashed border-line p-10 text-center text-faint">还没有运行记录</div>}
+        {list.length === 0 && !loading && (
+          <div className="rounded-xl border border-dashed border-line p-10 text-center text-faint">
+            {filter === "all" ? "这台服务器上还没有运行记录" : "没有符合条件的记录"}
+          </div>
+        )}
 
         <div className="space-y-2">
           {list.map((r) => {
             const active = isActive(r.status);
             const session = sessions[r.sessionId];
+            const units = progressUnits(r);
             return (
               <div
                 key={r.id}
@@ -93,29 +221,33 @@ export function RunsView() {
                   r.status === "running" ? "border-info/40" : r.status === "failed" ? "border-bad/30" : "border-line",
                 )}
               >
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2">
                   {r.kind === "workflow" ? (
                     <WorkflowIcon className="h-4 w-4 shrink-0 text-info" />
                   ) : (
                     <Bot className="h-4 w-4 shrink-0 text-muted" />
                   )}
-                  <button onClick={() => open(r)} className="min-w-0 truncate text-left font-medium hover:underline">
+                  <button onClick={() => open(r)} className="min-w-0 flex-1 truncate text-left font-medium hover:underline">
                     {r.title}
                   </button>
                   <StatusBadge status={r.status} />
-                  {r.parentRunId && <span className="chip">子 workflow</span>}
-                  {r.taskTitle && <span className="chip max-w-[60vw] truncate">任务 · {r.taskTitle}</span>}
-                  <span className="ml-auto text-[12px] text-faint">
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-muted">
+                  <span>
                     {fmtTime(r.createdAt)} · <Elapsed start={r.startedAt} end={r.endedAt} running={active} />
                   </span>
+                  {(r.parallel ?? 0) > 1 && (
+                    <span className="chip !border-info/30 !text-info">
+                      <Users className="h-3 w-3" /> {r.parallel} 个 Codex
+                    </span>
+                  )}
+                  {r.taskTitle && <span className="chip max-w-[60vw] truncate">任务 · {r.taskTitle}</span>}
+                  {session && session.title !== r.title && <span className="max-w-full truncate">会话「{session.title}」</span>}
                 </div>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-muted">
-                  <span className="truncate">会话「{session?.title ?? r.sessionId}」</span>
-                  <span className="truncate font-mono text-faint">{r.cwd}</span>
-                </div>
-                {(r.kind === "workflow" || progressUnits(r).length > 1) && (
+                <div className="truncate font-mono text-[11.5px] text-faint">{r.cwd}</div>
+                {(r.kind === "workflow" || units.length > 1) && (
                   <div className="mt-2 flex flex-wrap items-center gap-1">
-                    {progressUnits(r).map((s, i) => (
+                    {units.map((s, i) => (
                       <span
                         key={i}
                         title={`${s.title}：${statusLabel[s.status]}`}
@@ -138,15 +270,42 @@ export function RunsView() {
                 {r.status === "failed" && r.error && <div className="mt-1.5 truncate text-[12.5px] text-bad">{r.error}</div>}
                 <div className="mt-2 flex items-center gap-2">
                   <RunControls run={r} size="xs" />
+                  {!active && (
+                    <button className="btn-ghost !px-1.5 !py-0.5 text-[12px] hover:!text-bad" onClick={() => remove(r)} title="删除这条记录">
+                      <Trash2 className="h-3.5 w-3.5" /> 删除
+                    </button>
+                  )}
                   <button className="btn-ghost ml-auto text-[12px]" onClick={() => open(r)}>
-                    打开会话 →
+                    打开 →
                   </button>
                 </div>
               </div>
             );
           })}
         </div>
+
+        <div className="py-4 text-center text-[12.5px] text-faint">
+          {loading ? (
+            <Loader2 className="mx-auto h-4 w-4 animate-spin" />
+          ) : hasMore ? (
+            <button className="btn mx-auto" onClick={() => load(true)}>
+              加载更多
+            </button>
+          ) : (
+            list.length > 0 && `共 ${list.length} 条`
+          )}
+        </div>
       </div>
+      {cleanup && (
+        <CleanupSheet
+          node={current}
+          onClose={() => setCleanup(false)}
+          onDone={() => {
+            void load(false);
+            void loadStats();
+          }}
+        />
+      )}
     </div>
   );
 }

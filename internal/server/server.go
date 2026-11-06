@@ -430,6 +430,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) error {
 		NodeID    string            `json:"nodeId"`
 		Task      string            `json:"task"`     // a task from the library
 		TaskFile  string            `json:"taskFile"` // or a Markdown file on the server
+		Parallel  int               `json:"parallel"` // Codex working on it at once
 	}
 	if err := readJSON(r, &body); err != nil {
 		return err
@@ -467,7 +468,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) error {
 		}
 		b, err = s.eng.StartWorkflow(engine.WorkflowRequest{SessionID: sid, Name: body.Workflow, Source: body.Source, Cwd: cwd, Vars: body.Vars, Model: body.Model, Sandbox: body.Sandbox, Mode: body.Mode})
 	} else {
-		b, err = s.eng.StartChat(engine.ChatRequest{SessionID: sid, Text: body.Text, Task: body.Task, TaskFile: body.TaskFile, Model: body.Model, Sandbox: body.Sandbox})
+		b, err = s.eng.StartChat(engine.ChatRequest{SessionID: sid, Text: body.Text, Task: body.Task, TaskFile: body.TaskFile, Parallel: body.Parallel, Model: body.Model, Sandbox: body.Sandbox})
 	}
 	if err != nil {
 		if created {
@@ -487,7 +488,36 @@ func (s *Server) routeRuns(w http.ResponseWriter, r *http.Request, parts []strin
 	case len(parts) == 0 && m == http.MethodGet:
 		q := r.URL.Query()
 		limit, _ := strconv.Atoi(q.Get("limit"))
-		writeJSON(w, 200, s.eng.ListRuns(engine.RunFilter{Status: q.Get("status"), SessionID: q.Get("sessionId"), Limit: limit}))
+		f := engine.RunFilter{Status: q.Get("status"), SessionID: q.Get("sessionId"), NodeID: q.Get("node"), TasksOnly: q.Get("tasks") != "", Limit: limit}
+		if b := q.Get("before"); b != "" {
+			t, err := time.Parse(time.RFC3339Nano, b)
+			if err != nil {
+				return bad("before 需要 RFC3339 时间")
+			}
+			f.Before = t
+		}
+		writeJSON(w, 200, s.eng.ListRuns(f))
+	case len(parts) == 1 && parts[0] == "stats" && m == http.MethodGet:
+		writeJSON(w, 200, s.eng.RunStats(r.URL.Query().Get("node")))
+	case len(parts) == 1 && parts[0] == "cleanup" && m == http.MethodPost:
+		var body struct {
+			Node          string `json:"node"`
+			OlderThanDays int    `json:"olderThanDays"` // 0 = every finished run
+			DryRun        bool   `json:"dryRun"`
+		}
+		if err := readJSON(r, &body); err != nil {
+			return err
+		}
+		if body.OlderThanDays < 0 {
+			return bad("olderThanDays 不能为负")
+		}
+		n := s.eng.CleanupRuns(body.Node, time.Duration(body.OlderThanDays)*24*time.Hour, body.DryRun)
+		writeJSON(w, 200, map[string]int{"count": n})
+	case len(parts) == 1 && m == http.MethodDelete:
+		if err := s.eng.DeleteRun(parts[0]); err != nil {
+			return err
+		}
+		writeJSON(w, 200, map[string]bool{"ok": true})
 	case len(parts) == 1 && m == http.MethodGet:
 		b, err := s.eng.GetRun(parts[0])
 		if err != nil {
@@ -619,15 +649,16 @@ func (s *Server) routeTaskLib(w http.ResponseWriter, r *http.Request, parts []st
 	case len(parts) == 0 && r.Method == http.MethodPost, len(parts) == 1 && r.Method == http.MethodPut:
 		// Only the editable fields; name and timestamps are the server's.
 		var body struct {
-			Title string `json:"title"`
-			Node  string `json:"node"`
-			Cwd   string `json:"cwd"`
-			Body  string `json:"body"`
+			Title    string `json:"title"`
+			Node     string `json:"node"`
+			Cwd      string `json:"cwd"`
+			Parallel int    `json:"parallel"`
+			Body     string `json:"body"`
 		}
 		if err := readJSON(r, &body); err != nil {
 			return err
 		}
-		t := engine.Task{Title: body.Title, Node: body.Node, Cwd: body.Cwd, Body: body.Body}
+		t := engine.Task{Title: body.Title, Node: body.Node, Cwd: body.Cwd, Parallel: body.Parallel, Body: body.Body}
 		if len(parts) == 1 {
 			old, err := lib.Get(parts[0])
 			if err != nil {

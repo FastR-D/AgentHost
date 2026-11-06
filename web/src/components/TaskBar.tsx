@@ -1,13 +1,19 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { Bot, ChevronRight, ListTree, Loader2, Pause, Play, RotateCcw, Square } from "lucide-react";
-import type { Item, Run } from "../types";
+import { Bot, ChevronRight, ListTree, Loader2, Pause, Play, RotateCcw, Square, Users } from "lucide-react";
+import type { Item, Run, Step, SubAgent } from "../types";
 import { isActive } from "../types";
 import { closeProcess, control, openProcess, useStore } from "../store";
 import { Elapsed, StatusBadge, StatusIcon, between, fmtDuration, fmtTokens, statusLabel } from "../lib/format";
 import { ItemView } from "./ItemView";
 import { Sheet } from "./DirPicker";
 import { ProgressBar, RunControls, StepCard, progressUnits, useRun } from "./StepCard";
+
+/** Tokens of a run, sub-agents included. */
+export const runTokens = (run: Run) =>
+  run.steps.reduce((n, s) => n + (s.usage?.total?.totalTokens ?? 0) + (s.agents ?? []).reduce((m, a) => m + (a.tokens ?? 0), 0), 0);
+
+const agentsOf = (run: Run) => run.steps.flatMap((s) => s.agents ?? []);
 
 /** What a task run did, in a few words. */
 function summary(run: Run) {
@@ -19,6 +25,8 @@ function summary(run: Run) {
       if (it.kind === "file_change") for (const c of it.changes ?? []) files.add(c.path);
     }
   const parts: string[] = [];
+  const agents = agentsOf(run).length;
+  if (agents) parts.push(`${agents} 个子 Codex`);
   if (commands) parts.push(`${commands} 条命令`);
   if (files.size) parts.push(`改了 ${files.size} 个文件`);
   if (run.startedAt) parts.push(fmtDuration(between(run.startedAt, run.endedAt)));
@@ -36,7 +44,7 @@ export function TaskBar({ run }: { run: Run }) {
   const active = isActive(run.status);
   const steps = progressUnits(run).length > 1;
   const [busy, setBusy] = useState<string | null>(null);
-  const tokens = run.steps.reduce((n, s) => n + (s.usage?.total?.totalTokens ?? 0), 0);
+  const tokens = runTokens(run);
   const act = async (a: "pause" | "resume" | "stop" | "retry") => {
     setBusy(a);
     await control(run.id, a);
@@ -62,6 +70,7 @@ export function TaskBar({ run }: { run: Run }) {
               {active ? (
                 <>
                   后台执行中 · <Elapsed start={run.startedAt ?? run.createdAt} running />
+                  {(run.parallel ?? 0) > 1 && <> · 最多 {run.parallel} 个 Codex 并行</>}
                 </>
               ) : (
                 [summary(run), tokens ? `${fmtTokens(tokens)} tokens` : ""].filter(Boolean).join(" · ")
@@ -134,7 +143,7 @@ export function ProcessSheet() {
         ) : (st?.items ?? []).length === 0 ? (
           <div className="py-6 text-center text-[13px] text-faint">{active ? "正在启动…" : "没有执行记录"}</div>
         ) : (
-          (st.items ?? []).map((it) => <ItemView key={it.id} item={it} />)
+          <Timeline step={st} />
         )}
         {active && (
           <div className="flex items-center gap-2 pt-1 text-[12.5px] text-info">
@@ -144,6 +153,77 @@ export function ProcessSheet() {
         <div ref={end} />
       </div>
     </Sheet>
+  );
+}
+
+/** A step's timeline with each sub-Codex folded into one card where it started. */
+function Timeline({ step }: { step: Step }) {
+  const items = step.items ?? [];
+  const agents = step.agents ?? [];
+  const known = new Set(agents.map((a) => a.threadId));
+  const placed = new Set<string>();
+  const out: JSX.Element[] = [];
+  for (const it of items) {
+    if (it.threadId) continue; // shown in its agent's card
+    if (it.kind === "agent" && it.agentThread) {
+      const a = agents.find((x) => x.threadId === it.agentThread);
+      if (it.tool === "started" && a && !placed.has(a.threadId)) {
+        placed.add(a.threadId);
+        out.push(<SubAgentCard key={it.id} agent={a} items={items.filter((x) => x.threadId === a.threadId)} />);
+      }
+      continue;
+    }
+    if (it.kind === "agent" && it.tool === "wait") continue;
+    out.push(<ItemView key={it.id} item={it} />);
+  }
+  // Sub-agents whose start AgentHost did not see.
+  const orphans = [...new Set(items.filter((x) => x.threadId && !known.has(x.threadId)).map((x) => x.threadId!))];
+  orphans.forEach((th, i) =>
+    out.push(
+      <SubAgentCard
+        key={th}
+        agent={{ threadId: th, name: `子 Codex ${i + 1}`, status: "completed" }}
+        items={items.filter((x) => x.threadId === th)}
+      />,
+    ),
+  );
+  return <>{out}</>;
+}
+
+/** One sub-Codex: what it is doing now; open for its own commands and messages. */
+function SubAgentCard({ agent, items }: { agent: SubAgent; items: Item[] }) {
+  const [open, setOpen] = useState(false);
+  const shown = items.filter((it) => !(it.kind === "agent" && (it.tool === "interacted" || it.tool === "wait")));
+  const commands = shown.filter((it) => it.kind === "command").length;
+  const running = agent.status === "running";
+  const last = [...shown].reverse().find((it) => it.kind === "message" && it.text);
+  const sub = running
+    ? agent.activity || "思考中"
+    : [agent.status === "stopped" ? "已停止" : "已完成", commands ? `${commands} 条命令` : "", agent.tokens ? `${fmtTokens(agent.tokens)} tokens` : ""]
+        .filter(Boolean)
+        .join(" · ");
+  return (
+    <div className={clsx("rounded-xl border", running ? "border-info/40 bg-info/5" : "border-line")}>
+      <button className="flex w-full items-center gap-2 px-3 py-2 text-left" onClick={() => setOpen(!open)}>
+        {running ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
+        ) : (
+          <StatusIcon status={agent.status === "stopped" ? "stopped" : "completed"} className="h-4 w-4 shrink-0" />
+        )}
+        <Users className="h-3.5 w-3.5 shrink-0 text-muted" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate font-mono text-[13px] font-medium">{agent.name}</span>
+          <span className={clsx("block truncate text-[11.5px]", running ? "text-info" : "text-faint")}>{sub}</span>
+        </span>
+        <ChevronRight className={clsx("h-4 w-4 shrink-0 text-faint transition-transform", open && "rotate-90")} />
+      </button>
+      {!open && !running && last?.text && <div className="line-clamp-2 px-3 pb-2 pl-[52px] text-[12.5px] text-muted">{last.text}</div>}
+      {open && (
+        <div className="space-y-2 border-t border-line px-3 py-2">
+          {shown.length === 0 ? <div className="text-[12.5px] text-faint">还没有动作</div> : shown.map((it) => <ItemView key={it.id} item={it} />)}
+        </div>
+      )}
+    </div>
   );
 }
 

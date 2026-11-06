@@ -76,6 +76,7 @@ type Run struct {
 	TaskTitle     string             `json:"taskTitle,omitempty"`     // the task's name, for display
 	Note          string             `json:"note,omitempty"`          // what the user added to the task
 	Target        string             `json:"target,omitempty"`        // manager runs: the task run asked about
+	Parallel      int                `json:"parallel,omitempty"`      // Codex working on the task at once (sub-agents); 0/1 = one
 	Network       bool               `json:"network,omitempty"`       // agent commands may use the network
 	WritableRoots []string           `json:"writableRoots,omitempty"` // extra sandbox-writable dirs (e.g. .git for git sync)
 	Vars          map[string]string  `json:"vars,omitempty"`
@@ -131,12 +132,24 @@ type Step struct {
 	Diff            string          `json:"diff,omitempty"`
 	Plan            []PlanEntry     `json:"plan,omitempty"` // steps reported by an orchestrating agent
 	Orchestrate     bool            `json:"orchestrate,omitempty"`
+	Agents          []*SubAgent     `json:"agents,omitempty"` // sub-Codex the agent started for this step
 	Usage           json.RawMessage `json:"usage,omitempty"`
 	Activity        string          `json:"activity,omitempty"`
 	StartedAt       *time.Time      `json:"startedAt,omitempty"`
 	EndedAt         *time.Time      `json:"endedAt,omitempty"`
 
 	def *workflow.Step
+}
+
+// SubAgent is a Codex sub-agent (its own thread) working on part of a step.
+type SubAgent struct {
+	ThreadID  string     `json:"threadId"`
+	Name      string     `json:"name"`   // from the agent path, e.g. write_tests
+	Status    string     `json:"status"` // running | completed | stopped
+	Activity  string     `json:"activity,omitempty"`
+	Tokens    int64      `json:"tokens,omitempty"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
 }
 
 // Item kinds.
@@ -169,30 +182,31 @@ type PlanEntry struct {
 
 // Item is one entry in a step's timeline.
 type Item struct {
-	ID         string          `json:"id"`
-	Kind       string          `json:"kind"`
-	Status     string          `json:"status,omitempty"` // running | completed | failed | declined
-	Title      string          `json:"title,omitempty"`
-	Phase      string          `json:"phase,omitempty"`
-	Text       string          `json:"text,omitempty"`
-	Command    string          `json:"command,omitempty"`
-	Argv       []string        `json:"argv,omitempty"`
-	Cwd        string          `json:"cwd,omitempty"`
-	Output     string          `json:"output,omitempty"`
-	Stdout     string          `json:"stdout,omitempty"`
-	Stderr     string          `json:"stderr,omitempty"`
-	ExitCode   *int            `json:"exitCode,omitempty"`
-	DurationMs int64           `json:"durationMs,omitempty"`
-	Changes    []FileChange    `json:"changes,omitempty"`
-	Plan       []PlanEntry     `json:"plan,omitempty"`
-	Server     string          `json:"server,omitempty"`
-	Tool       string          `json:"tool,omitempty"`
-	Arguments  json.RawMessage `json:"arguments,omitempty"`
-	Result     string          `json:"result,omitempty"`
-	ThreadID   string          `json:"threadId,omitempty"`
-	Raw        json.RawMessage `json:"raw,omitempty"`
-	StartedAt  *time.Time      `json:"startedAt,omitempty"`
-	EndedAt    *time.Time      `json:"endedAt,omitempty"`
+	ID          string          `json:"id"`
+	Kind        string          `json:"kind"`
+	Status      string          `json:"status,omitempty"` // running | completed | failed | declined
+	Title       string          `json:"title,omitempty"`
+	Phase       string          `json:"phase,omitempty"`
+	Text        string          `json:"text,omitempty"`
+	Command     string          `json:"command,omitempty"`
+	Argv        []string        `json:"argv,omitempty"`
+	Cwd         string          `json:"cwd,omitempty"`
+	Output      string          `json:"output,omitempty"`
+	Stdout      string          `json:"stdout,omitempty"`
+	Stderr      string          `json:"stderr,omitempty"`
+	ExitCode    *int            `json:"exitCode,omitempty"`
+	DurationMs  int64           `json:"durationMs,omitempty"`
+	Changes     []FileChange    `json:"changes,omitempty"`
+	Plan        []PlanEntry     `json:"plan,omitempty"`
+	Server      string          `json:"server,omitempty"`
+	Tool        string          `json:"tool,omitempty"`
+	Arguments   json.RawMessage `json:"arguments,omitempty"`
+	Result      string          `json:"result,omitempty"`
+	ThreadID    string          `json:"threadId,omitempty"`    // set for items of a sub-agent's thread
+	AgentThread string          `json:"agentThread,omitempty"` // sub-agent events: the thread of the sub-agent
+	Raw         json.RawMessage `json:"raw,omitempty"`
+	StartedAt   *time.Time      `json:"startedAt,omitempty"`
+	EndedAt     *time.Time      `json:"endedAt,omitempty"`
 }
 
 // LogEntry is one line in a run's execution log.

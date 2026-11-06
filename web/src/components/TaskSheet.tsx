@@ -5,6 +5,7 @@ import { api } from "../api";
 import { navigate, toast, useCurrentNode, useStore } from "../store";
 import type { SkillScan, Task } from "../types";
 import { Sheet } from "./DirPicker";
+import { ParallelChip } from "./Parallel";
 
 let cache: Task[] | null = null;
 
@@ -115,7 +116,7 @@ export function TaskSheet({
   /** Location chip for a new session; omitted when running in an existing one. */
   where?: React.ReactNode;
   onSelect?: (t: Task) => void;
-  onRun: (task: string, note: string) => Promise<boolean>;
+  onRun: (task: string, note: string, parallel: number) => Promise<boolean>;
   onClose: () => void;
 }) {
   const all = useTasks();
@@ -125,21 +126,26 @@ export function TaskSheet({
   const [text, setText] = useState(initialText);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [parallel, setParallel] = useState(1);
 
   const select = (t: Task) => {
     setSel(t.name);
+    setParallel(t.parallel ?? 1);
     onSelect?.(t);
   };
-  // Apply the preselected task's location once the list arrives.
+  // Apply the preselected task's settings once the list arrives.
   useEffect(() => {
     const t = initial && tasks?.find((x) => x.name === initial);
-    if (t) onSelect?.(t);
+    if (t) {
+      setParallel(t.parallel ?? 1);
+      onSelect?.(t);
+    }
   }, [!!all]);
 
   const run = async () => {
     if (!sel) return;
     setBusy(true);
-    const ok = await onRun(sel, text.trim());
+    const ok = await onRun(sel, text.trim(), parallel);
     setBusy(false);
     if (ok) onClose();
   };
@@ -190,7 +196,11 @@ export function TaskSheet({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="block text-[14px] font-medium">{t.title}</span>
-                  {at && <span className="block truncate font-mono text-[11.5px] text-faint">{at}</span>}
+                  {(at || (t.parallel ?? 0) > 1) && (
+                    <span className="block truncate font-mono text-[11.5px] text-faint">
+                      {[at, (t.parallel ?? 0) > 1 ? `${t.parallel} 个 Codex 并行` : ""].filter(Boolean).join(" · ")}
+                    </span>
+                  )}
                   <span className="line-clamp-2 text-[12.5px] text-muted">{t.body}</span>
                 </span>
               </button>
@@ -219,16 +229,19 @@ export function TaskSheet({
           onChange={(e) => setText(e.target.value)}
           placeholder="补充说明（可选），会接在任务内容后面，例如：只看 src 目录"
         />
-        {where}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {where}
+          <ParallelChip value={parallel} onChange={setParallel} />
+        </div>
       </div>
     </Sheet>
   );
 }
 
 /** Starts a saved task in an existing session. */
-export async function runTaskInSession(sessionId: string, task: string, note: string) {
+export async function runTaskInSession(sessionId: string, task: string, note: string, parallel: number) {
   try {
-    await api.chat(sessionId, note, { task });
+    await api.chat(sessionId, note, { task, parallel });
     return true;
   } catch (e: any) {
     toast(e.message);

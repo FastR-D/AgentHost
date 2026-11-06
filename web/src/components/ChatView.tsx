@@ -98,7 +98,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
         </AssistantRuntimeProvider>
       </div>
       {processOpen && <ProcessSheet />}
-      {taskOpen && <TaskSheet onClose={() => setTaskOpen(false)} onRun={(task, note) => runTaskInSession(sessionId, task, note)} />}
+      {taskOpen && <TaskSheet onClose={() => setTaskOpen(false)} onRun={(task, note, parallel) => runTaskInSession(sessionId, task, note, parallel)} />}
     </div>
   );
 }

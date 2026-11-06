@@ -152,13 +152,40 @@ func (e *Engine) taskSnapshot(r *Run) string {
 		}
 	}
 	fmt.Fprintf(&b, "\n到目前为止：执行了 %d 条命令，改动了 %d 个文件。\n", commands, len(files))
+	for _, st := range r.Steps {
+		if len(st.Agents) == 0 {
+			continue
+		}
+		running, done := agentCounts(st)
+		fmt.Fprintf(&b, "\n子 Codex（%d 个在干活，%d 个已结束）：\n", running, done)
+		for _, a := range st.Agents {
+			line := fmt.Sprintf("- %s：%s", a.Name, map[string]string{"running": "进行中", "completed": "已完成", "stopped": "已停止"}[a.Status])
+			if a.Activity != "" && a.Status == "running" {
+				line += "，正在" + a.Activity
+			}
+			b.WriteString(line + "\n")
+		}
+	}
 	// The latest events, oldest first.
 	var recent []string
 	for _, st := range r.Steps {
+		names := map[string]string{}
+		for _, a := range st.Agents {
+			names[a.ThreadID] = a.Name
+		}
 		for i := len(st.Items) - 1; i >= 0 && len(recent) < 15; i-- {
-			if line := snapshotLine(st.Items[i]); line != "" {
-				recent = append(recent, line)
+			it := st.Items[i]
+			line := snapshotLine(it)
+			if it.ThreadID != "" && line == "" && it.Kind == ItemMessage && strings.TrimSpace(it.Text) != "" {
+				line = "Codex 说：" + truncate(strings.TrimSpace(it.Text), 300)
 			}
+			if line == "" {
+				continue
+			}
+			if it.ThreadID != "" {
+				line = "［子 Codex " + firstNonEmpty(names[it.ThreadID], "?") + "］" + line
+			}
+			recent = append(recent, line)
 		}
 	}
 	if len(recent) > 0 {

@@ -25,6 +25,7 @@ import { fmtRelative } from "../lib/format";
 import { Markdown } from "./Markdown";
 import { Sheet, WhereChip } from "./DirPicker";
 import { RepoSkills } from "./TaskSheet";
+import { ParallelChip } from "./Parallel";
 
 export function fmtSize(n: number) {
   if (n < 1024) return `${n} B`;
@@ -73,10 +74,11 @@ const dirOf = (p: string) => p.slice(0, p.lastIndexOf("/")) || "/";
 function RunFileSheet({ node, path, onClose }: { node: string; path: string; onClose: () => void }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  const [parallel, setParallel] = useState(1);
   const dir = dirOf(path);
   const run = async () => {
     setBusy(true);
-    const res = await guard(api.startTask({ taskFile: path, nodeId: node, cwd: dir, text: note.trim() }));
+    const res = await guard(api.startTask({ taskFile: path, nodeId: node, cwd: dir, text: note.trim(), parallel }));
     setBusy(false);
     if (res) navigate({ page: "session", id: res.session.id });
   };
@@ -112,6 +114,7 @@ function RunFileSheet({ node, path, onClose }: { node: string; path: string; onC
           onChange={(e) => setNote(e.target.value)}
           placeholder="补充说明（可选），会接在文件内容后面"
         />
+        <ParallelChip value={parallel} onChange={setParallel} />
         <div className="rounded-xl border border-line bg-panel p-3">
           <div className="mb-1.5 text-[13px] font-medium">会交给 Codex 的技能</div>
           <RepoSkills node={node} path={dir} />

@@ -28,7 +28,12 @@ import (
 type Settings struct {
 	Codex     CodexSettings `json:"codex"`
 	Git       GitSettings   `json:"git"`
+	Runs      RunSettings   `json:"runs"`
 	UpdatedAt time.Time     `json:"updatedAt"`
+}
+
+type RunSettings struct {
+	RetentionDays int `json:"retentionDays"` // delete finished runs older than this; 0 = keep
 }
 
 type CodexSettings struct {
@@ -63,7 +68,8 @@ type SettingsView struct {
 		TokenSet  bool   `json:"tokenSet"`
 		TokenHint string `json:"tokenHint,omitempty"`
 	} `json:"git"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	Runs      RunSettings `json:"runs"`
+	UpdatedAt time.Time   `json:"updatedAt"`
 }
 
 // SettingsPatch updates settings. A nil secret keeps the stored value; "" clears it.
@@ -84,6 +90,9 @@ type SettingsPatch struct {
 		UserName      *string `json:"userName"`
 		UserEmail     *string `json:"userEmail"`
 	} `json:"git"`
+	Runs *struct {
+		RetentionDays *int `json:"retentionDays"`
+	} `json:"runs"`
 }
 
 type settingsStore struct {
@@ -127,6 +136,7 @@ func viewOf(s Settings) SettingsView {
 	v.Git.SSHPrivateKey, v.Git.Token = "", ""
 	v.Git.SSHKeySet = s.Git.SSHPrivateKey != ""
 	v.Git.TokenSet, v.Git.TokenHint = s.Git.Token != "", hint(s.Git.Token)
+	v.Runs = s.Runs
 	v.UpdatedAt = s.UpdatedAt
 	return v
 }
@@ -172,6 +182,13 @@ func (e *Engine) UpdateSettings(p SettingsPatch) (SettingsView, error) {
 		set(&n.Git.TokenHost, g.TokenHost)
 		set(&n.Git.UserName, g.UserName)
 		set(&n.Git.UserEmail, g.UserEmail)
+	}
+	if r := p.Runs; r != nil && r.RetentionDays != nil {
+		if *r.RetentionDays < 0 || *r.RetentionDays > 3650 {
+			st.mu.Unlock()
+			return SettingsView{}, errors.New("保留天数只能是 0（不自动清理）到 3650")
+		}
+		n.Runs.RetentionDays = *r.RetentionDays
 	}
 	if n.Codex.BaseURL != "" && !strings.HasPrefix(n.Codex.BaseURL, "http://") && !strings.HasPrefix(n.Codex.BaseURL, "https://") {
 		st.mu.Unlock()

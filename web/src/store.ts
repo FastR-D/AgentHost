@@ -73,6 +73,8 @@ interface State {
   logsPanel?: { runId: string; stepId?: string };
   /** Run whose execution details are open. */
   processRun?: string;
+  /** Runs deleted while this page was open (lists drop them). */
+  deletedRuns: Record<string, true>;
   nodes: NodeInfo[];
   defaultNode: string;
   /** The server the user is working on; every page shows only its things. */
@@ -90,6 +92,7 @@ function savedNode(): string {
 
 export const useStore = create<State>(() => ({
   currentNode: savedNode(),
+  deletedRuns: {},
   sessions: {},
   runs: {},
   loadedSessions: {},
@@ -207,6 +210,11 @@ function applyEvent(s: State, ev: ServerEvent): Partial<State> {
     }
     case "run":
       return { runs: { ...s.runs, [d.id]: mergeRun(s.runs[d.id], d) } };
+    case "run.deleted": {
+      const runs = { ...s.runs };
+      delete runs[d.id];
+      return { runs, deletedRuns: { ...s.deletedRuns, [d.id]: true } };
+    }
     case "run.full":
       return { runs: { ...s.runs, [d.id]: mergeRun(s.runs[d.id], d) } };
     case "item": {
@@ -292,12 +300,16 @@ export function disconnect() {
 
 /** Reload the session list, the runs summary list and every open session. */
 export async function resync() {
-  const [info, sessions, runs, nodes] = await Promise.all([
+  // Only what the sidebar needs: running tasks and the latest few. The run
+  // list pages through the rest itself.
+  const [info, sessions, active, recent, nodes] = await Promise.all([
     api.info(),
     api.sessions(),
-    api.runs({ limit: 500 }),
+    api.runs({ status: "active" }),
+    api.runs({ limit: 40 }),
     api.nodes().catch(() => ({ nodes: [], default: "local" })),
   ]);
+  const runs = [...active, ...recent.filter((r) => !active.some((a) => a.id === r.id))];
   const loaded = Object.keys(get().loadedSessions);
   set((s) => {
     const merged: Record<string, Run> = {};

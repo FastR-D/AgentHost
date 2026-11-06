@@ -78,10 +78,11 @@ docker compose logs agenthost     # 查看登录地址和令牌
 - **代码里的任务**：在“文件”里打开仓库中的任意 `.md`，点“作为任务运行”，就在那个文件所在的目录、那台服务器上新开会话，让 Codex 按文件内容做
 - **技能**：技能是代码里自带的 `SKILL.md`（每个技能一个文件夹）。每次启动 Codex 时，AgentHost 在会话目录所在的整个仓库里找技能（跳过 `node_modules`、`vendor`、`dist`、`build`、`.venv` 等依赖和构建目录），通过 `skills/extraRoots/set` 只交给这一个 Codex 进程，不写 `~/.codex/skills`，也不改 `config.toml`。Codex 自己会读的 `.agents/skills`、`.codex/skills` 不重复交。时间线里会显示“本任务注入了 N 个技能”。Codex 觉得合适就会用；任务里写 `$技能名` 就是要求一定用它（任务编辑页列出了目录里的技能，点一下即可插入）
 - **会话**：一个会话就是一条对话。顶部任务条显示任务的状态、正在做什么、进度，以及暂停、继续、停止、重新运行；点它展开完整的执行过程（命令卡片含工作目录、实时输出、退出码；文件改动有 diff）。对话里只留你说的话、回复和结果，执行过程收成一行。任务结束后再发消息，会接着同一个 Codex 上下文继续做
+- **多个 Codex 并行**：输入框下方（以及任务库、运行任务弹窗、“作为任务运行”里）的“1 个 Codex”可以改成 2–8 个。Codex 会把任务拆成互不冲突的几部分，用 Codex 自带的子 agent 同时去做，自己负责分派、检查和汇总；执行过程里每个子 Codex 一张卡片，显示它正在做什么，点开能看它的命令和输出。AgentHost 用 `agents.max_concurrent_threads_per_session` 限制同时干活的子 Codex 数（主 Codex 不算在内），只对这个任务生效。任务库里的任务可以存默认并行数（开头写 `并行: 3`）；会话里接着发的消息沿用上一个任务的设置。token 消耗大约随数量成倍增加
 - **管家**：任务在后台执行时，输入框里的消息发给管家。它是另起的一个只读 Codex，每次都能看到任务的实时状态（执行步骤、最近的命令和输出），负责回答“跑到哪了”“为什么报错”；要改做法（比如“第三步不用做了”），它会转告干活的 Codex，对方当场看到并调整；也可以让它暂停或停止任务。问问题不会打断正在干活的 Codex
 - **Git**：会话目录是 Git 仓库时，顶部显示分支和改动数；点“同步到 Git”，Codex 会检查改动、写提交信息、`pull --rebase` 后推送（不会强推，冲突会停下来问你）
 - **文件**：只读浏览任意服务器上的目录和文件，看任务产出；文本带行号，图片直接显示，可下载
-- **运行记录**：所有会话的运行状态、进度和控制按钮
+- **运行记录**：当前服务器上所有任务的状态、进度和控制按钮，按状态筛选，每页 30 条，往下点“加载更多”。已结束的记录可以单条删除（对话里的这次任务和日志一起删除），也可以点“清理”批量删除 7 天前、30 天前或全部已结束的记录；还可以设置自动清理（保留 7 / 30 / 90 天）。一个会话的记录删光时，会话也一起删除
 - **运行日志**：每个任务的完整日志（调度、命令、Codex JSON-RPC、Codex stderr），可筛选、搜索、下载
 
 ## 配置
@@ -119,8 +120,11 @@ Codex 接口、API Key、模型、是否允许联网、Git 凭据都在网页的
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `POST` | `/api/tasks` | 开始运行：`{"text"}`、`{"task": 任务库里的名字}` 或 `{"taskFile": 服务器上的 .md}`（`text` 作为补充说明），可选 `nodeId`、`cwd`、`sessionId` |
-| `GET` | `/api/runs`、`/api/runs/{id}`、`/api/runs/{id}/logs` | 任务、详情、日志 |
+| `POST` | `/api/tasks` | 开始运行：`{"text"}`、`{"task": 任务库里的名字}` 或 `{"taskFile": 服务器上的 .md}`（`text` 作为补充说明），可选 `nodeId`、`cwd`、`sessionId`、`parallel`（同时用几个 Codex） |
+| `GET` | `/api/runs`、`/api/runs/{id}`、`/api/runs/{id}/logs` | 运行记录（`?node=&status=&tasks=1&limit=&before=` 分页）、详情、日志 |
+| `GET` | `/api/runs/stats?node=` | 各状态的数量 |
+| `DELETE` | `/api/runs/{id}` | 删除一条已结束的记录 |
+| `POST` | `/api/runs/cleanup` | 批量删除：`{"node", "olderThanDays", "dryRun"}`（`olderThanDays: 0` 表示全部已结束的） |
 | `POST` | `/api/runs/{id}/pause`·`resume`·`stop`·`retry` | 控制 |
 | `GET/POST/PATCH` | `/api/sessions…` | 会话；`/sessions/{id}/git`、`/sessions/{id}/git/sync` |
 | `POST` | `/api/sessions/{id}/chat` | 发消息：任务执行中发给管家，否则接着任务继续；`{"text", "task"?}` |

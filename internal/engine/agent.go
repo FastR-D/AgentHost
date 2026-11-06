@@ -333,7 +333,12 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 	if err != nil {
 		return "", err
 	}
-	client, err := codex.Start(ctx, codex.Options{Node: nd, Bin: e.codexBin(nd), ExtraArgs: e.codexArgsFor(nd, r.Network, r.WritableRoots...), Env: e.extraEnv(nd), Cwd: st.Cwd, Experimental: true}, h)
+	args := e.codexArgsFor(nd, r.Network, r.WritableRoots...)
+	if n := r.Parallel; n > 1 && r.Kind != KindManager {
+		// Codex's own sub-agents; the limit counts them, not the coordinating agent.
+		args = append(args, "-c", "features.multi_agent=true", "-c", fmt.Sprintf("agents.max_concurrent_threads_per_session=%d", n))
+	}
+	client, err := codex.Start(ctx, codex.Options{Node: nd, Bin: e.codexBin(nd), ExtraArgs: args, Env: e.extraEnv(nd), Cwd: st.Cwd, Experimental: true}, h)
 	if err != nil {
 		e.logf(r.ID, st.ID, "host", "error", "启动 Codex 失败：%v", err)
 		return "", fmt.Errorf("启动 Codex CLI 失败：%w", err)
@@ -426,6 +431,9 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 		}
 	}
 	input = append(input, map[string]any{"type": "text", "text": prompt, "text_elements": []any{}})
+	if first && !manager && r.Parallel > 1 {
+		input = append(input, map[string]any{"type": "text", "text": parallelHint(r.Parallel), "text_elements": []any{}})
+	}
 	turnParams := map[string]any{"threadId": thr.Thread.ID, "input": input}
 	if e.cfg.ReasoningSummary != "" {
 		turnParams["summary"] = e.cfg.ReasoningSummary
@@ -573,6 +581,10 @@ func (e *Engine) onCodexNotification(r *Run, st *Step, method string, params jso
 		return
 	}
 	foreign := mainThread != "" && p.ThreadID != "" && p.ThreadID != mainThread
+	foreignID := ""
+	if foreign {
+		foreignID = p.ThreadID
+	}
 
 	switch method {
 	case "turn/completed":
@@ -615,6 +627,11 @@ func (e *Engine) onCodexNotification(r *Run, st *Step, method string, params jso
 			it.ThreadID = p.ThreadID
 		}
 		e.upsertItem(r, st, it)
+		if it.Kind == ItemAgent && it.AgentThread != "" && !foreign {
+			e.trackAgent(r, st, it)
+		} else if foreign {
+			e.agentDid(r, st, p.ThreadID, it)
+		}
 		if method == "item/completed" && it.Kind == ItemCommand {
 			code := "?"
 			if it.ExitCode != nil {
@@ -623,17 +640,17 @@ func (e *Engine) onCodexNotification(r *Run, st *Step, method string, params jso
 			go e.logf(r.ID, st.ID, "exec", "", "$ %s  [cwd %s, exit %s, %dms]", it.Command, it.Cwd, code, it.DurationMs)
 		}
 	case "item/agentMessage/delta":
-		e.appendDelta(r, st, p.ItemID, ItemMessage, "text", p.Delta)
+		e.appendDeltaOn(r, st, foreignID, p.ItemID, ItemMessage, "text", p.Delta)
 	case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
-		e.appendDelta(r, st, p.ItemID, ItemReasoning, "text", p.Delta)
+		e.appendDeltaOn(r, st, foreignID, p.ItemID, ItemReasoning, "text", p.Delta)
 	case "item/reasoning/summaryPartAdded":
 		if it := findItem(st, p.ItemID); it != nil && it.Text != "" {
-			e.appendDelta(r, st, p.ItemID, ItemReasoning, "text", "\n\n")
+			e.appendDeltaOn(r, st, foreignID, p.ItemID, ItemReasoning, "text", "\n\n")
 		}
 	case "item/commandExecution/outputDelta":
-		e.appendDelta(r, st, p.ItemID, ItemCommand, "output", p.Delta)
+		e.appendDeltaOn(r, st, foreignID, p.ItemID, ItemCommand, "output", p.Delta)
 	case "item/plan/delta":
-		e.appendDelta(r, st, p.ItemID, ItemPlan, "text", p.Delta)
+		e.appendDeltaOn(r, st, foreignID, p.ItemID, ItemPlan, "text", p.Delta)
 	case "turn/plan/updated":
 		it := &Item{ID: "plan-" + p.TurnID, Kind: ItemPlan, Status: "running", Title: "计划"}
 		if p.Explanation != nil {
@@ -667,6 +684,8 @@ func (e *Engine) onCodexNotification(r *Run, st *Step, method string, params jso
 		if !foreign && len(p.TokenUsage) > 0 {
 			st.Usage = append(json.RawMessage{}, p.TokenUsage...)
 			e.touchRun(r)
+		} else if foreign {
+			e.agentTokens(r, st, p.ThreadID, p.TokenUsage)
 		}
 	case "error":
 		if p.Error == nil {

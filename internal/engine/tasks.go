@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ type Task struct {
 	Title     string    `json:"title"`
 	Node      string    `json:"node,omitempty"` // server id
 	Cwd       string    `json:"cwd,omitempty"`
+	Parallel  int       `json:"parallel,omitempty"` // Codex working on it at once; 0 = one
 	Body      string    `json:"body"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
@@ -129,6 +131,9 @@ func parseTask(name string, b []byte) Task {
 			t.Title = pick(m, "名称", "标题", "title", "name")
 			t.Node = pick(m, "服务器", "server", "node")
 			t.Cwd = pick(m, "目录", "cwd", "dir")
+			if n, err := strconv.Atoi(pick(m, "并行", "parallel")); err == nil {
+				t.Parallel = clampParallel(n)
+			}
 			text = body
 		}
 	}
@@ -143,13 +148,14 @@ func parseTask(name string, b []byte) Task {
 }
 
 type taskFront struct {
-	Title string `yaml:"名称"`
-	Node  string `yaml:"服务器,omitempty"`
-	Cwd   string `yaml:"目录,omitempty"`
+	Title    string `yaml:"名称"`
+	Node     string `yaml:"服务器,omitempty"`
+	Cwd      string `yaml:"目录,omitempty"`
+	Parallel int    `yaml:"并行,omitempty"`
 }
 
 func renderTask(t Task) []byte {
-	y, _ := yaml.Marshal(taskFront{Title: t.Title, Node: t.Node, Cwd: t.Cwd})
+	y, _ := yaml.Marshal(taskFront{Title: t.Title, Node: t.Node, Cwd: t.Cwd, Parallel: clampParallel(t.Parallel)})
 	return []byte("---\n" + string(y) + "---\n\n" + strings.TrimSpace(t.Body) + "\n")
 }
 
@@ -238,7 +244,7 @@ func (l *TaskLib) Get(name string) (Task, error) {
 // Save creates (empty Name) or updates a task.
 func (l *TaskLib) Save(t Task) (Task, error) {
 	t.Title = strings.TrimSpace(strings.ReplaceAll(t.Title, "\n", " "))
-	t.Node, t.Cwd = strings.TrimSpace(t.Node), strings.TrimSpace(t.Cwd)
+	t.Node, t.Cwd, t.Parallel = strings.TrimSpace(t.Node), strings.TrimSpace(t.Cwd), clampParallel(t.Parallel)
 	t.Body = strings.TrimSpace(strings.ReplaceAll(t.Body, "\r\n", "\n"))
 	if t.Title == "" {
 		return Task{}, errors.New("请给任务起个名字")

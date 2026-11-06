@@ -19,6 +19,9 @@
 - Markdown：`fixCjkEmphasis`（`Markdown.tsx`）把 `**问题：**后文` 改写成 `**问题**：后文`，否则 CommonMark 不认这种粗体。
 - README 带截图（`docs/images/*.png`，iPhone 13 尺寸、2 倍图，外加一张电脑端）。重拍的脚本在 `/tmp/pw-scripts/readme.js`、`readme2.js`（会被清掉的话照着 README 里的场景重搭：示例仓库 shop-api、release-notes 技能、gpu-1 节点）。
 
+- **运行记录管理**（2026-11-06）：`internal/engine/runs.go`。`RunStats`、`DeleteRun`（只删已结束的；连同子 workflow、指向它的管家回答、日志一起删；会话空了就删会话）、`CleanupRuns(node, olderThan, dryRun)`、`retentionLoop`（设置 `runs.retentionDays`，每小时一次）。`ListRuns` 支持 `node`/`before`/`tasks`。前端 `RunsView` 自己按页拉取（每页 30），用 store 里的实时版本覆盖；store 的 `resync` 只加载进行中的和最近 40 条。`run.deleted` 事件会放进 `deletedRuns`。
+- **一个任务多个 Codex**（2026-11-06）：`internal/engine/parallel.go`。`Run.Parallel`（2–8，0 表示一个），来自请求、任务库（frontmatter `并行`），或者沿用会话里上一个任务。启动时加 `-c features.multi_agent=true -c agents.max_concurrent_threads_per_session=N`，第一轮多发一段 `parallelHint`。Codex 子 agent 的事件会带着各自的 threadId 推给同一个客户端（实测：3 个子 agent 的命令时间段重叠）；主线程的 `subAgentActivity{kind: started|completed, agentThreadId, agentPath}` 用来维护 `Step.Agents`（`SubAgent{name, status, activity, tokens}`），子线程的条目都带 `Item.ThreadID`。前端 `TaskBar.tsx` 的 `Timeline`/`SubAgentCard` 按子 Codex 分组显示，`ParallelChip`（`Parallel.tsx`）用来选数量。实测上限 N 只算子 agent：设 2、要求 3 个时，第三个会等前两个结束才开始。
+
 可以继续做的：
 - 任务库里的任务只能在“任务库/常用任务/输入框旁的任务按钮”运行，暂时没有定时运行。
 - 后端旧 workflow（`internal/workflow`、`StartWorkflow`、`/api/workflows`、`library.go`）仍保留，只为兼容旧运行记录，可以继续瘦身。
@@ -75,8 +78,8 @@
 
 ## 4. 运行状态
 
-- 线上实例：pid 38338（`bin/agenthost`，经 `setsid nohup ./start.sh` 启动），端口 `:8080`，日志在 `/tmp/agenthost-live.log`。
-- 访问地址：`http://localhost:8080/?token=439d2407398adc94613b4837f56634fe`。登录令牌在 `data/token`，节点令牌在 `data/node-token`。
+- 线上实例：见 `ps -eo pid,args | grep bin/agenthost`（`bin/agenthost`，经 `setsid nohup ./start.sh` 启动），端口 `:8080`，日志在 `/tmp/agenthost-live.log`。
+- 访问地址：`http://localhost:8080/?token=<data/token 的内容>`。登录令牌在 `data/token`，节点令牌在 `data/node-token`（不要写进仓库里的文件）。
 - `data/tasks/` 是任务库（3 个示例 + 迁移来的 `测试workflow`）；`data/workflows/`、`data/skills-lib/` 是旧目录，保留未删。
 - 测试用实例（`/tmp/ah-*`）已全部停掉。
 

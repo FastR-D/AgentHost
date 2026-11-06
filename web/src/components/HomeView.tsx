@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useStore, guard, navigate, useCurrentNode } from "../store";
 import { WhereChip } from "./DirPicker";
 import { TaskSheet, taskWhere, tasksFor, useTasks } from "./TaskSheet";
+import { ParallelChip } from "./Parallel";
 
 const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
@@ -16,6 +17,7 @@ export function HomeView() {
   const [text, setText] = useState("");
   const [cwd, setCwd] = useState("");
   const [busy, setBusy] = useState(false);
+  const [parallel, setParallel] = useState(1);
   const [picker, setPicker] = useState<{ task?: string; cwd: string } | null>(null);
   const openPicker = (task?: string) => setPicker({ task, cwd });
   // A directory belongs to its server.
@@ -26,7 +28,7 @@ export function HomeView() {
     if (!coarse) ref.current?.focus();
   }, []);
 
-  const start = async (body: { text?: string; task?: string }) => {
+  const start = async (body: { text?: string; task?: string; parallel?: number }) => {
     const res = await guard(api.startTask({ ...body, cwd, nodeId: node }));
     if (res) navigate({ page: "session", id: res.session.id });
     return !!res;
@@ -35,7 +37,7 @@ export function HomeView() {
   const submit = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
-    await start({ text });
+    await start({ text, parallel });
     setBusy(false);
   };
 
@@ -62,6 +64,7 @@ export function HomeView() {
           />
           <div className="flex flex-wrap items-center gap-x-1 gap-y-2 px-3 pb-3">
             {where}
+            <ParallelChip value={parallel} onChange={setParallel} />
             <button className="btn-ghost shrink-0" onClick={() => openPicker()} title="从任务库选一个任务运行">
               <ClipboardList className="h-4 w-4" /> 任务
             </button>
@@ -101,7 +104,11 @@ export function HomeView() {
                       <span className="truncate font-medium">{t.title}</span>
                       <Play className="ml-auto h-3.5 w-3.5 shrink-0 text-faint md:opacity-0 md:group-hover:opacity-100" />
                     </div>
-                    {at && <div className="mt-0.5 truncate font-mono text-[11px] text-faint">{at}</div>}
+                    {(at || (t.parallel ?? 0) > 1) && (
+                      <div className="mt-0.5 truncate font-mono text-[11px] text-faint">
+                        {[at, (t.parallel ?? 0) > 1 ? `${t.parallel} 个 Codex 并行` : ""].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
                     <div className="mt-1 line-clamp-2 text-[12px] text-muted">{t.body}</div>
                   </button>
                 );
@@ -124,7 +131,7 @@ export function HomeView() {
             setCwd(picker.cwd);
             setPicker(null);
           }}
-          onRun={(task, note) => start({ task, text: note })}
+          onRun={(task, note, n) => start({ task, text: note, parallel: n })}
         />
       )}
     </div>

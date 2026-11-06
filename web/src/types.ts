@@ -71,6 +71,8 @@ export interface Item {
   arguments?: unknown;
   result?: string;
   threadId?: string;
+  /** Sub-agent events: the sub-agent's thread. */
+  agentThread?: string;
   raw?: unknown;
   startedAt?: string;
   endedAt?: string;
@@ -114,7 +116,19 @@ export interface Step {
   plan?: PlanEntry[];
   orchestrate?: boolean;
   usage?: TokenUsage;
+  /** Codex sub-agents working on parts of this step. */
+  agents?: SubAgent[];
   activity?: string;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+export interface SubAgent {
+  threadId: string;
+  name: string;
+  status: "running" | "completed" | "stopped" | string;
+  activity?: string;
+  tokens?: number;
   startedAt?: string;
   endedAt?: string;
 }
@@ -181,6 +195,8 @@ export interface Run {
   prompt: string;
   /** Manager replies: the task run asked about. */
   target?: string;
+  /** How many Codex work on the task at once (sub-agents); absent = one. */
+  parallel?: number;
   source?: string;
   workflowFile?: string;
   workflow?: WorkflowDef;
@@ -264,6 +280,7 @@ export interface Task {
   title: string;
   node?: string;
   cwd?: string;
+  parallel?: number;
   body: string;
   updatedAt: string;
 }
@@ -362,7 +379,14 @@ export interface SettingsView {
     userName: string;
     userEmail: string;
   };
+  runs: { retentionDays: number };
   updatedAt: string;
+}
+
+export interface RunStats {
+  total: number;
+  active: number;
+  counts: Record<string, number>;
 }
 
 export interface CheckResult {

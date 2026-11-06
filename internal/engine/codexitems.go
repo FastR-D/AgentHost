@@ -37,6 +37,7 @@ type threadItem struct {
 	ReceiverThreadIDs []string                  `json:"receiverThreadIds"`
 	AgentsStates      json.RawMessage           `json:"agentsStates"`
 	AgentPath         string                    `json:"agentPath"`
+	AgentThreadID     string                    `json:"agentThreadId"`
 	Kind              string                    `json:"kind"`
 	Path              string                    `json:"path"`
 	StartedAtMs       *int64                    `json:"startedAtMs"`
@@ -179,9 +180,11 @@ func convertItem(raw json.RawMessage, completed bool) *Item {
 		}
 		it.Result = string(nonNullJSON(t.AgentsStates))
 	case "subAgentActivity":
+		// kind: started | completed (on the parent's thread) | interacted (on the child's)
 		it.Kind = ItemAgent
 		it.Tool = t.Kind
-		it.Title = "子 Agent " + t.AgentPath + " " + t.Kind
+		it.Title = agentName(t.AgentPath)
+		it.AgentThread = t.AgentThreadID
 		if t.Model != nil {
 			it.Server = *t.Model
 		}
@@ -300,11 +303,24 @@ func activityFor(it *Item) string {
 	case ItemWebSearch:
 		return "搜索: " + it.Text
 	case ItemAgent:
+		switch it.Tool {
+		case "wait", "started", "completed", "interacted":
+			return "" // the sub-agents' progress says it better
+		}
 		return "调用 Agent: " + it.Tool
 	case ItemPlan:
 		return "制定计划"
 	}
 	return ""
+}
+
+// agentName turns an agent path (/root/write_tests, /root/a/b) into a name.
+func agentName(path string) string {
+	n := strings.TrimPrefix(strings.TrimPrefix(path, "/root"), "/")
+	if n == "" {
+		return "主 Codex"
+	}
+	return n
 }
 
 func firstLine(s string) string {

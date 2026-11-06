@@ -137,6 +137,7 @@ func New(cfg Config, lib *Library) (*Engine, error) {
 		return nil, err
 	}
 	go e.persistLoop()
+	go e.retentionLoop()
 	return e, nil
 }
 
@@ -532,6 +533,9 @@ func (e *Engine) GetSession(id string) (json.RawMessage, error) {
 type RunFilter struct {
 	Status    string
 	SessionID string
+	NodeID    string
+	Before    time.Time // only runs created before this (paging)
+	TasksOnly bool      // leave out manager replies and sub-workflows
 	Limit     int
 }
 
@@ -541,6 +545,9 @@ func (e *Engine) ListRuns(f RunFilter) json.RawMessage {
 	list := []*RunSummary{}
 	for _, r := range e.runs {
 		if f.SessionID != "" && r.SessionID != f.SessionID {
+			continue
+		}
+		if (f.NodeID != "" && r.NodeID != f.NodeID) || (f.TasksOnly && !isTaskRun(r)) || (!f.Before.IsZero() && !r.CreatedAt.Before(f.Before)) {
 			continue
 		}
 		if f.Status != "" {
@@ -594,6 +601,7 @@ type ChatRequest struct {
 	Text      string `json:"text"`     // the message; with a task, extra instructions
 	Task      string `json:"task"`     // run a task from the library
 	TaskFile  string `json:"taskFile"` // or a Markdown file on the session's server
+	Parallel  int    `json:"parallel"` // Codex at once; 0 = the task's own setting, else the session's last task
 	Model     string `json:"model"`
 	Sandbox   string `json:"sandbox"`
 }
@@ -643,6 +651,7 @@ func (e *Engine) StartChat(req ChatRequest) (json.RawMessage, error) {
 // taskSpec is what a task contributes to a run.
 type taskSpec struct {
 	name, file, title, body string
+	parallel                int
 }
 
 // resolveTask loads the task a request names, if any. Call without e.mu.
@@ -653,7 +662,7 @@ func (e *Engine) resolveTask(req ChatRequest) (*taskSpec, error) {
 		if err != nil {
 			return nil, fmt.Errorf("找不到任务「%s」", req.Task)
 		}
-		return &taskSpec{name: t.Name, title: t.Title, body: t.Body}, nil
+		return &taskSpec{name: t.Name, title: t.Title, body: t.Body, parallel: t.Parallel}, nil
 	case strings.TrimSpace(req.TaskFile) != "":
 		e.mu.Lock()
 		s := e.sessions[req.SessionID]
@@ -734,6 +743,20 @@ func (e *Engine) startChat(req ChatRequest, title string, network bool, writable
 	if ts != nil {
 		r.Task, r.TaskFile, r.TaskTitle, r.Note = ts.name, ts.file, ts.title, note
 	}
+	r.Parallel = req.Parallel
+	if r.Parallel == 0 && ts != nil {
+		r.Parallel = ts.parallel
+	}
+	if r.Parallel == 0 && ts == nil {
+		// A follow-up keeps working the way the task did.
+		for i := len(s.RunIDs) - 1; i >= 0; i-- {
+			if prev := e.runs[s.RunIDs[i]]; prev != nil && isTaskRun(prev) {
+				r.Parallel = prev.Parallel
+				break
+			}
+		}
+	}
+	r.Parallel = clampParallel(r.Parallel)
 	if title != "" {
 		r.Title = title
 	}
@@ -867,7 +890,7 @@ func (e *Engine) Retry(runID string) (json.RawMessage, error) {
 		r = &Run{
 			ID: newID("r"), SessionID: s.ID, Kind: KindChat, Title: old.Title, Prompt: old.Prompt, Cwd: s.Cwd, NodeID: s.NodeID,
 			Model: old.Model, Sandbox: old.Sandbox, Status: StatusQueued, CreatedAt: time.Now(), Network: old.Network,
-			WritableRoots: old.WritableRoots, Task: old.Task, TaskFile: old.TaskFile, TaskTitle: old.TaskTitle, Note: old.Note,
+			WritableRoots: old.WritableRoots, Task: old.Task, TaskFile: old.TaskFile, TaskTitle: old.TaskTitle, Note: old.Note, Parallel: old.Parallel,
 		}
 		r.Steps = []*Step{{ID: "codex", Title: "Codex", Type: workflow.TypeAgent, DependsOn: []string{}, If: workflow.IfSuccess,
 			Status: StatusPending, MaxAttempts: 1, Cwd: s.Cwd, Prompt: old.Prompt, Items: []*Item{}}}

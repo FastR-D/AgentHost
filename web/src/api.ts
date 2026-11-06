@@ -9,6 +9,7 @@ import type {
   NodeInfo,
   ParseResult,
   Run,
+  RunStats,
   Session,
   SettingsView,
   SkillScan,
@@ -69,7 +70,7 @@ export const api = {
     req<Session>("PATCH", `/sessions/${encodeURIComponent(id)}`, patch),
   deleteSession: (id: string) => req("DELETE", `/sessions/${encodeURIComponent(id)}`),
   /** A message, or a task (with text as extra instructions). */
-  chat: (sessionId: string, text: string, task?: { task?: string; taskFile?: string }) =>
+  chat: (sessionId: string, text: string, task?: { task?: string; taskFile?: string; parallel?: number }) =>
     req<LaunchResult>("POST", `/sessions/${encodeURIComponent(sessionId)}/chat`, { text, ...task }),
   startWorkflow: (
     sessionId: string,
@@ -90,15 +91,25 @@ export const api = {
     task?: string;
     /** A Markdown file on the server; a new session defaults to its directory. */
     taskFile?: string;
+    /** Codex working on it at once; 0 = the task's own setting. */
+    parallel?: number;
   }) => req<LaunchResult>("POST", "/tasks", body),
 
-  runs: (params: { status?: string; sessionId?: string; limit?: number } = {}) => {
+  runs: (params: { status?: string; sessionId?: string; limit?: number; node?: string; before?: string; tasks?: boolean } = {}) => {
     const q = new URLSearchParams();
     if (params.status) q.set("status", params.status);
     if (params.sessionId) q.set("sessionId", params.sessionId);
     if (params.limit) q.set("limit", String(params.limit));
+    if (params.node) q.set("node", params.node);
+    if (params.before) q.set("before", params.before);
+    if (params.tasks) q.set("tasks", "1");
     return req<Run[]>("GET", `/runs?${q}`);
   },
+  runStats: (node: string) => req<RunStats>("GET", `/runs/stats?node=${encodeURIComponent(node)}`),
+  deleteRun: (id: string) => req("DELETE", `/runs/${encodeURIComponent(id)}`),
+  /** Deletes finished runs that ended more than olderThanDays ago (0 = all finished). */
+  cleanupRuns: (node: string, olderThanDays: number, dryRun = false) =>
+    req<{ count: number }>("POST", "/runs/cleanup", { node, olderThanDays, dryRun }),
   run: (id: string) => req<Run>("GET", `/runs/${encodeURIComponent(id)}`),
   control: (id: string, action: "pause" | "resume" | "stop" | "retry") =>
     req<any>("POST", `/runs/${encodeURIComponent(id)}/${action}`),

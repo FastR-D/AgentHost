@@ -238,6 +238,37 @@ func fakeAppServer() {
 					}
 					return
 				}
+				// Parallel: two sub-agents on their own threads, then a summary.
+				if strings.Contains(prompt, "最多同时派") {
+					cap := "?"
+					for i, a := range os.Args {
+						if i > 0 && os.Args[i-1] == "-c" && strings.HasPrefix(a, "agents.max_concurrent_threads_per_session=") {
+							cap = strings.TrimPrefix(a, "agents.max_concurrent_threads_per_session=")
+						}
+					}
+					sub := func(name, th string, kind string) {
+						item := map[string]any{"type": "subAgentActivity", "id": "sa-" + name + kind, "kind": kind, "agentThreadId": th, "agentPath": "/root/" + name}
+						notify("item/started", with(map[string]any{"item": item}))
+						notify("item/completed", with(map[string]any{"item": item}))
+					}
+					for _, n := range []string{"part_a", "part_b"} {
+						th := thread + "-" + n
+						sub(n, th, "started")
+						cmd := map[string]any{"type": "commandExecution", "id": "cmd-" + n, "command": "make " + n, "cwd": "/tmp", "status": "inProgress"}
+						notify("item/started", map[string]any{"threadId": th, "turnId": "t-" + n, "item": cmd})
+						notify("thread/tokenUsage/updated", map[string]any{"threadId": th, "turnId": "t-" + n, "tokenUsage": map[string]any{"total": map[string]any{"totalTokens": 1000}}})
+					}
+					time.Sleep(300 * time.Millisecond) // both running: the test looks at the activity
+					for _, n := range []string{"part_a", "part_b"} {
+						th := thread + "-" + n
+						code := 0
+						notify("item/completed", map[string]any{"threadId": th, "turnId": "t-" + n, "item": map[string]any{"type": "commandExecution", "id": "cmd-" + n, "command": "make " + n, "cwd": "/tmp", "status": "completed", "exitCode": code}})
+						notify("item/completed", map[string]any{"threadId": th, "turnId": "t-" + n, "item": map[string]any{"type": "agentMessage", "id": "msg-" + n, "text": n + " done", "phase": "final_answer"}})
+						sub(n, th, "completed")
+					}
+					reply2("PAR cap=" + cap)
+					return
+				}
 				if strings.Contains(prompt, "report_progress") && contains(dynTools, "report_progress") {
 					tool("report_progress", map[string]any{"steps": []map[string]any{{"title": "看文件", "status": "running"}, {"title": "写总结", "status": "pending"}}})
 					tool("report_progress", map[string]any{"steps": []map[string]any{{"title": "看文件", "status": "completed", "note": "3 个文件"}, {"title": "写总结", "status": "completed"}}})
