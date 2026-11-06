@@ -161,6 +161,9 @@ ensure_node() {
 }
 
 ensure_codex() {
+  # Skip when this instance won't run tasks locally (web-only mode).
+  isOff() { [[ "${1,,}" == "off" || "${1,,}" == "false" || "$1" == "0" ]]; }
+  if isOff "${AGENTHOST_LOCAL_NODE:-}"; then return; fi
   local bin="${CODEX_BIN:-codex}"
   if have "$bin"; then return; fi
   [[ "${AGENTHOST_SKIP_INSTALL:-}" == 1 ]] && { warn "Codex CLI not found; tasks will fail until it is installed"; return; }
@@ -172,6 +175,9 @@ ensure_codex() {
 }
 
 check_codex_auth() {
+  # Skip when this instance won't run tasks locally (web-only mode).
+  isOff() { [[ "${1,,}" == "off" || "${1,,}" == "false" || "$1" == "0" ]]; }
+  if isOff "${AGENTHOST_LOCAL_NODE:-}"; then return; fi
   local bin="${CODEX_BIN:-codex}"
   have "$bin" || return 0
   local home="${CODEX_HOME:-$HOME/.codex}"
