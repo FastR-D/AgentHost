@@ -1,33 +1,23 @@
-# 内网部署：容器以 node 角色运行，主动拨号到公网的 AgentHost Web 控制台。
-# 不需要对外暴露端口 —— 容器只往外连，可放在 NAT / 防火墙后面。
-# Codex CLI 和所有任务工作目录都在这个容器里。
+# Dev container 节点：每个容器就是一个独立的开发环境，
+# 代码和工作目录全在容器内，主动拨号到公网 Web 控制台。
+# 不暴露端口，可放在 NAT / 防火墙后面。
+# 一台服务器可以起多个容器，每个用不同的 AGENTHOST_NODE_NAME 区分。
 #
 # 用法：
-#   1. 在公网那台先起 Web 服务，到「服务器」页面拿到节点令牌
-#   2. 改下面的 AGENTHOST_HUB / AGENTHOST_NODE_TOKEN
+#   1. 公网 Web 控制台 → 「服务器」页 → 拿节点令牌
+#   2. 填写下面的 AGENTHOST_HUB / AGENTHOST_NODE_TOKEN / AGENTHOST_NODE_NAME
 #   3. docker compose -f docker-compose.node.yml up -d
+#
+# 多个节点：复制 agenthost-node 块，改不同的 container_name 和 NODE_NAME 即可。
 
 services:
   agenthost-node:
     build: .
+    container_name: agenthost-node-1
     environment:
-      # —— node 角色必填 ——
       AGENTHOST_HUB: https://agenthost.example.com   # 公网 Web 控制台地址
       AGENTHOST_NODE_TOKEN: change-me                # 控制台「服务器」页给节点发的令牌
-      AGENTHOST_NODE_NAME: "内网节点"
-
-      # —— 任务执行 ——
+      AGENTHOST_NODE_NAME: "dev-1"                   # 显示在服务器列表里的名字
       AGENTHOST_SANDBOX: workspace-write
-      AGENTHOST_APPROVAL_POLICY: never
-      # AGENTHOST_MODEL: gpt-5
-
-      AGENTHOST_DATA: /data
-      AGENTHOST_WORKSPACE: /workspace
-    volumes:
-      - ./node-data:/data
-      - ./workspace:/workspace
-      # ~/.codex 是可选的：如果你在 Web 控制台的设置里填了 API Key，
-      # 这里不挂载也能用。只在本地有 codex login 配置且想复用时再挂载。
-      # - ~/.codex:/root/.codex:ro
-    # 不映射端口：容器主动连 hub，外部不需要访问它
+    # 不映射端口，不挂载宿主目录：容器即开发环境，数据全在容器内
     restart: unless-stopped

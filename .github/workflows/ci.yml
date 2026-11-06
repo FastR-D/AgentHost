@@ -110,4 +110,4 @@ jobs:
           docker stop agenthost_ci
 
       - name: Verify codex present
-        run: docker run --rm agenthost:ci sh -c "codex --version"
+        run: docker run --rm --entrypoint sh agenthost:ci -c "codex --version"

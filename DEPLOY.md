@@ -63,34 +63,32 @@ Web 控制台需要一个公网可达的地址给内网节点和浏览器连。�
 
 节点容器（`runtime-node`）基于 ubuntu:24.04，内置 Codex CLI 和完整开发环境。它只往外连，不监听端口，可放在 NAT、公司防火墙、家里的宽带后面。
 
+**dev container 思路**：容器本身就是开发环境，代码和工作目录全在容器内，不需要挂载宿主目录。一台机器可以起多个容器，每个都是独立的 node，用不同名字区分。
+
 ### 方式 A：Docker（推荐）
 
 ```bash
 git clone https://github.com/FastR-D/AgentHost.git
 cd AgentHost
 
-# 编辑 docker-compose.node.yml，填入公网 Web 地址和节点令牌：
+# 编辑 docker-compose.node.yml，填入公网 Web 地址、节点令牌和节点名：
 #   AGENTHOST_HUB=https://agenthost.example.com
 #   AGENTHOST_NODE_TOKEN=<第 4 步拿到的令牌>
+#   AGENTHOST_NODE_NAME=dev-1
 
 docker compose -f docker-compose.node.yml up -d
 docker compose -f docker-compose.node.yml logs -f
 # 看到「已连接 Web 服务器」就成功了
 ```
 
+多节点：在 `docker-compose.node.yml` 里复制 `agenthost-node` 块，改不同的 `container_name` 和 `AGENTHOST_NODE_NAME` 即可。
+
 ### 方式 B：编译好的二进制
 
 ```bash
-# 解压 release 包后：
 export AGENTHOST_HUB=https://agenthost.example.com
 export AGENTHOST_NODE_TOKEN=<节点令牌>
 ./agenthost node
-```
-
-或者用包里的启动脚本：
-
-```bash
-./start.sh node --hub https://agenthost.example.com --token <节点令牌>
 ```
 
 ## 四、在 Web 控制台拿到节点令牌
