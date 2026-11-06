@@ -1,22 +1,25 @@
 # AgentHost 部署指南
 
-AgentHost 分两个角色：
+AgentHost 分两个角色，**用不同的容器镜像**：
 
-- **Web 控制台**（公网）：浏览器访问，管理会话、任务、运行记录。
-- **节点 node**（内网）：实际跑 Codex 任务的机器。它**主动往外拨号**连接 Web 控制台，所以不需要公网 IP、不用在路由器上开端口、也不用内网穿透。
+- **Web 控制台**（公网，`runtime-web`）：浏览器访问，管理会话、任务、运行记录。镜像里**没有** Codex CLI / Node.js / 开发工具，很小。它不跑任何任务（`AGENTHOST_LOCAL_NODE=off`）。
+- **节点 node**（内网，`runtime-node`）：实际跑 Codex 任务的机器，基于 ubuntu:24.04 的全功能 dev container。所有 Codex 执行、工作目录、任务日志都在这里。它**主动往外拨号**连接 Web 控制台，所以不需要公网 IP、不用开端口、不用内网穿透。
 
 换句话说，**"内网穿透"已经内建**了：只要 Web 控制台在公网（任何云服务器、VPS、Cloudflare Tunnel、frps 都行），内网机器用 node 角色连过去就行。
 
 ```
-┌─────────────┐         WebSocket (出站)        ┌─────────────┐
-│  公网 Web    │ ◀───────────────────────────── │  内网 node   │
-│  控制台      │   node 主动拨号，可穿 NAT/防火墙  │  (跑 Codex)  │
-│  :8080      │                                  │  不开端口     │
-└─────────────┘                                  └─────────────┘
-   浏览器访问                                          你的代码仓库
+┌─────────────────┐         WebSocket (出站)        ┌─────────────────┐
+│  公网 Web 控制台  │ ◀───────────────────────────── │  内网 node 容器   │
+│  runtime-web     │   node 主动拨号，可穿 NAT/防火墙  │  runtime-node    │
+│  :8080           │                                  │  Codex + 工作目录  │
+│  无 Codex CLI     │                                  │  ubuntu 24.04     │
+└─────────────────┘                                  └─────────────────┘
+   浏览器访问                                          你的代码仓库 + 日志
 ```
 
 ## 一、在公网机器部署 Web 控制台
+
+Web 控制台镜像（`runtime-web`）只有 agenthost 二进制，没有 Codex CLI，很小。
 
 ### 方式 A：用 Docker（推荐）
 
@@ -40,10 +43,8 @@ docker compose logs | grep "Open:"
 从 GitHub Release 下载 `agenthost-linux-amd64.tar.gz`，解压后：
 
 ```bash
-./agenthost
+AGENTHOST_LOCAL_NODE=off ./agenthost
 # 默认监听 :8080，token 自动生成并打印在日志里
-# 用环境变量改地址 / 鉴权：
-#   AGENTHOST_ADDR=:8080  AGENTHOST_TOKEN=your-token  ./agenthost
 ```
 
 ## 二、把公网地址暴露出去（任选其一）
@@ -60,7 +61,7 @@ Web 控制台需要一个公网可达的地址给内网节点和浏览器连。�
 
 ## 三、在内网机器部署节点 node
 
-节点只往外连，不监听任何端口，可放在 NAT、公司防火墙、家里的宽带后面。
+节点容器（`runtime-node`）基于 ubuntu:24.04，内置 Codex CLI 和完整开发环境。它只往外连，不监听端口，可放在 NAT、公司防火墙、家里的宽带后面。
 
 ### 方式 A：Docker（推荐）
 
@@ -68,7 +69,7 @@ Web 控制台需要一个公网可达的地址给内网节点和浏览器连。�
 git clone https://github.com/FastR-D/AgentHost.git
 cd AgentHost
 
-# 编辑 docker-compose.node.yml，填入公网 Web 地址和节点令牌
+# 编辑 docker-compose.node.yml，填入公网 Web 地址和节点令牌：
 #   AGENTHOST_HUB=https://agenthost.example.com
 #   AGENTHOST_NODE_TOKEN=<第 4 步拿到的令牌>
 
@@ -139,4 +140,4 @@ Web 控制台：
 不需要。它只发起出站 WebSocket 连接，可穿透 NAT 和大多数防火墙。
 
 **Q：Web 控制台本身能跑任务吗？**
-默认会启动一个「本机」节点。设 `AGENTHOST_LOCAL_NODE=off` 关掉它，只让远程节点干活。
+不能，也不需要。`docker-compose.yml` 里默认 `AGENTHOST_LOCAL_NODE=off`，任务全由 node 容器执行。Codex CLI 和工作日志都在 node 容器里，Web 控制台只负责 UI 和转发。
