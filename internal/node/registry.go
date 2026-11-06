@@ -106,7 +106,7 @@ func (g *Registry) Get(id string) (Node, error) {
 
 // List returns all nodes: local first, then remotes by name.
 func (g *Registry) List() []Info {
-	var out []Info
+	out := make([]Info, 0)
 	if g.local != nil {
 		out = append(out, g.local.Info())
 	}
