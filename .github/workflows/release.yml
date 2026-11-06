@@ -47,20 +47,24 @@ jobs:
       - name: Package release tarball
         run: |
           PKG=agenthost-linux-amd64
-          mkdir -p dist/$PKG
-          # Binary
-          cp agenthost dist/$PKG/
-          # Launch helper (bare-metal or node role: ./start.sh node --hub ... --token ...)
-          cp start.sh dist/$PKG/
-          chmod +x dist/$PKG/start.sh
+          mkdir -p dist/$PKG/bin
+          cp agenthost dist/$PKG/bin/agenthost
+          chmod +x dist/$PKG/bin/agenthost
+          printf "prebuilt-%s" "$(git rev-parse --short HEAD)" > dist/$PKG/bin/.build-hash
+          mkdir -p dist/$PKG/web/dist
+          touch dist/$PKG/web/dist/.gitkeep
+          printf "prebuilt" > dist/$PKG/web/dist/.build-hash
+          # Scripts
+          cp run.sh dist/$PKG/
+          chmod +x dist/$PKG/run.sh
           # Docker support
-          cp Dockerfile entrypoint.sh dist/$PKG/
+          cp deploy/Dockerfile deploy/entrypoint.sh dist/$PKG/
           cp docker-compose.yml dist/$PKG/
           cp docker-compose.node.yml dist/$PKG/
           # Config example & example tasks
           cp .env.example dist/$PKG/
           cp -r tasks dist/$PKG/tasks
-          # Docs: deployment guide + main README
+          # Docs
           cp DEPLOY.md README.md dist/$PKG/
           tar -C dist -czf dist/$PKG.tar.gz $PKG/
 

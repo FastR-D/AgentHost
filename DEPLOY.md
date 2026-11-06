@@ -40,12 +40,24 @@ docker compose logs | grep "Open:"
 
 ### 方式 B：用编译好的二进制
 
-从 GitHub Release 下载 `agenthost-linux-amd64.tar.gz`，解压后：
+从 GitHub Release 下载 `agenthost-linux-amd64.tar.gz`，解压后直接运行：
 
 ```bash
-AGENTHOST_LOCAL_NODE=off ./agenthost
-# 默认监听 :8080，token 自动生成并打印在日志里
+tar -xzf agenthost-linux-amd64.tar.gz
+cd agenthost-linux-amd64
+
+# 复制并编辑配置（可选）
+cp .env.example .env
+# 编辑 .env，至少设置：
+#   AGENTHOST_ADDR=:8080
+#   AGENTHOST_LOCAL_NODE=off   # web 控制台模式
+
+# 启动（会自动读取同目录的 .env）
+set -a; source .env; set +a
+./agenthost
 ```
+
+日志里会打印登录地址和 token。
 
 ## 二、把公网地址暴露出去（任选其一）
 
@@ -86,8 +98,10 @@ docker compose -f docker-compose.node.yml logs -f
 ### 方式 B：编译好的二进制
 
 ```bash
-export AGENTHOST_HUB=https://agenthost.example.com
-export AGENTHOST_NODE_TOKEN=<节点令牌>
+tar -xzf agenthost-linux-amd64.tar.gz
+cd agenthost-linux-amd64
+AGENTHOST_HUB=https://agenthost.example.com \
+AGENTHOST_NODE_TOKEN=<节点令牌> \
 ./agenthost node
 ```
 

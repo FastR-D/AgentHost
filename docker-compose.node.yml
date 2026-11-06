@@ -12,7 +12,9 @@
 
 services:
   agenthost-node:
-    build: .
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
     container_name: agenthost-node-1
     environment:
       AGENTHOST_HUB: https://agenthost.example.com   # 公网 Web 控制台地址

@@ -222,6 +222,12 @@ build_go() {
     log "server binary is up to date"
     return
   fi
+  # If no source files are found (e.g. a release package), skip rebuilding.
+  if [[ $REBUILD == 0 && -x "$ROOT/bin/agenthost" ]] && \
+     ! find "$ROOT" -maxdepth 3 -name '*.go' -not -path '*/.tools/*' -quit 2>/dev/null | grep -q .; then
+    log "no source found; using pre-built binary at $ROOT/bin/agenthost"
+    return
+  fi
   log "building server"
   mkdir -p "$ROOT/bin"
   # Target the host explicitly: the installed Go may itself be an emulated build for another arch.

@@ -67,7 +67,7 @@ RUN npm install -g --no-audit --no-fund @openai/codex \
  && ln -sf /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
 
 COPY --from=go-builder /agenthost /usr/local/bin/agenthost
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 ENV AGENTHOST_ADDR=:8080 \
     AGENTHOST_DATA=/data \
