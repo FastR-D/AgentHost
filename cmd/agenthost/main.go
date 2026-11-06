@@ -236,7 +236,11 @@ func printBanner(addr, token string) {
 	host := addr
 	if strings.HasPrefix(addr, "[::]") || strings.HasPrefix(addr, "0.0.0.0") || strings.HasPrefix(addr, ":") {
 		_, port, _ := net.SplitHostPort(addr)
-		host = "localhost:" + port
+		if ip := outboundIP(); ip != "" {
+			host = net.JoinHostPort(ip, port)
+		} else {
+			host = "localhost:" + port
+		}
 	}
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  AgentHost is running.")
@@ -247,6 +251,17 @@ func printBanner(addr, token string) {
 		fmt.Fprintf(os.Stderr, "  Open:  http://%s/\n", host)
 	}
 	fmt.Fprintln(os.Stderr, "")
+}
+
+// outboundIP returns the machine's preferred outbound IP address.
+// No packets are actually sent — UDP connect just resolves the local route.
+func outboundIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return ""
+	}
+	defer conn.Close()
+	return conn.LocalAddr().(*net.UDPAddr).IP.String()
 }
 
 func fatal(msg string, err error) {
