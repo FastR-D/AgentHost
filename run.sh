@@ -9,7 +9,7 @@
 
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BIN="$ROOT/agenthost"
+BIN="$ROOT/bin/agenthost"
 PID_FILE="$ROOT/agenthost.pid"
 LOG_FILE="$ROOT/agenthost.log"
 
