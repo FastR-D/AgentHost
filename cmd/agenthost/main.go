@@ -46,7 +46,7 @@ func main() {
 			os.Exit(runCheck(os.Args[2:]))
 		}
 	}
-	addr := flag.String("addr", env("AGENTHOST_ADDR", ":8080"), "listen address (AGENTHOST_ADDR)")
+	addr := flag.String("addr", env("AGENTHOST_ADDR", "0.0.0.0:8080"), "listen address (AGENTHOST_ADDR)")
 	dataDir := flag.String("data", env("AGENTHOST_DATA", "./data"), "data directory (AGENTHOST_DATA)")
 	workspace := flag.String("workspace", env("AGENTHOST_WORKSPACE", "./workspace"), "default working directory for tasks (AGENTHOST_WORKSPACE)")
 	wfDir := flag.String("workflows", env("AGENTHOST_WORKFLOWS", ""), "workflow library directory (AGENTHOST_WORKFLOWS, default <data>/workflows)")
