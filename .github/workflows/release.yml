@@ -1,0 +1,78 @@
+name: Release
+
+# Produces a linux/amd64 binary artifact on every push to main.
+# Tag a release (v*.*.*) to publish a GitHub Release with the binary attached.
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+jobs:
+  build-linux-amd64:
+    name: Build linux/amd64 binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci --no-audit --no-fund
+        working-directory: web
+
+      - name: Build web UI
+        run: npm run build
+        working-directory: web
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build linux/amd64 binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "-s -w" \
+            -o agenthost ./cmd/agenthost
+
+      - name: Package release tarball
+        run: |
+          PKG=agenthost-linux-amd64
+          mkdir -p dist/$PKG
+          # Binary
+          cp agenthost dist/$PKG/
+          # Launch helper (bare-metal or node role: ./start.sh node --hub ... --token ...)
+          cp start.sh dist/$PKG/
+          chmod +x dist/$PKG/start.sh
+          # Docker support
+          cp Dockerfile entrypoint.sh dist/$PKG/
+          cp docker-compose.yml dist/$PKG/
+          cp docker-compose.node.yml dist/$PKG/
+          # Config example & example tasks
+          cp .env.example dist/$PKG/
+          cp -r tasks dist/$PKG/tasks
+          # Minimal README
+          cp README.md dist/$PKG/
+          tar -C dist -czf dist/$PKG.tar.gz $PKG/
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agenthost-linux-amd64
+          path: dist/agenthost-linux-amd64.tar.gz
+          retention-days: 30
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/agenthost-linux-amd64.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true

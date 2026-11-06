@@ -1,0 +1,31 @@
+# 内网部署：容器以 node 角色运行，主动拨号到公网的 AgentHost Web 控制台。
+# 不需要对外暴露端口 —— 容器只往外连，可放在 NAT / 防火墙后面。
+#
+# 用法：
+#   1. 在公网那台先起 Web 服务，到「服务器」页面拿到节点令牌
+#   2. 改下面的 AGENTHOST_HUB / AGENTHOST_NODE_TOKEN
+#   3. docker compose -f docker-compose.node.yml up -d
+
+services:
+  agenthost-node:
+    build: .
+    environment:
+      # —— node 角色必填 ——
+      AGENTHOST_HUB: https://agenthost.example.com   # 公网 Web 控制台地址
+      AGENTHOST_NODE_TOKEN: change-me                # 控制台「服务器」页给节点发的令牌
+      AGENTHOST_NODE_NAME: "内网节点"
+
+      # —— 任务执行 ——
+      AGENTHOST_SANDBOX: workspace-write             # read-only | workspace-write | danger-full-access
+      AGENTHOST_APPROVAL_POLICY: never
+      # AGENTHOST_MODEL: gpt-5                         # 默认沿用 codex 配置，可选覆盖
+
+      # —— 任务在容器里跑，数据落本地卷 ——
+      AGENTHOST_DATA: /data
+      AGENTHOST_WORKSPACE: /workspace
+    volumes:
+      - ./node-data:/data                  # 节点私有数据（如 git 密钥）
+      - ./workspace:/workspace             # 任务工作目录
+      - ~/.codex:/root/.codex:ro           # codex 登录 / config.toml（只读挂载）
+    # 不映射端口：容器主动连 hub，外部不需要访问它
+    restart: unless-stopped
