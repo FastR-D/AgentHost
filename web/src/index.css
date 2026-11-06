@@ -1,0 +1,154 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 255 255 255;
+  --panel: 249 249 249;
+  --sunken: 243 243 244;
+  --line: 229 229 231;
+  --fg: 23 23 23;
+  --muted: 101 101 108;
+  --faint: 154 154 160;
+  --accent: 16 16 16;
+  --ok: 22 163 74;
+  --bad: 220 38 38;
+  --warn: 202 138 4;
+  --info: 37 99 235;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: 24 24 26;
+    --panel: 31 31 34;
+    --sunken: 38 38 42;
+    --line: 52 52 57;
+    --fg: 236 236 238;
+    --muted: 165 165 172;
+    --faint: 115 115 122;
+    --accent: 245 245 245;
+    --ok: 74 222 128;
+    --bad: 248 113 113;
+    --warn: 250 204 21;
+    --info: 96 165 250;
+    color-scheme: dark;
+  }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+/* Mobile browsers: follow the visible viewport (toolbar, keyboard). */
+@supports (height: 100dvh) {
+  #root {
+    height: 100dvh;
+  }
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0.75rem);
+}
+
+/* iOS zooms into inputs under 16px; keep 16px on touch screens. */
+@media (pointer: coarse) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+  .cm-content {
+    font-size: 15px;
+  }
+}
+
+body {
+  @apply bg-bg text-fg antialiased;
+  font-size: 14px;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line)) transparent;
+}
+
+.shimmer-text {
+  background: linear-gradient(90deg, rgb(var(--muted)) 0%, rgb(var(--muted)) 40%, rgb(var(--fg)) 50%, rgb(var(--muted)) 60%, rgb(var(--muted)) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.md {
+  @apply prose prose-sm max-w-none dark:prose-invert;
+  --tw-prose-body: rgb(var(--fg));
+  --tw-prose-headings: rgb(var(--fg));
+  --tw-prose-code: rgb(var(--fg));
+  --tw-prose-pre-bg: rgb(var(--sunken));
+  --tw-prose-pre-code: rgb(var(--fg));
+  --tw-prose-invert-pre-bg: rgb(var(--sunken));
+  --tw-prose-invert-pre-code: rgb(var(--fg));
+}
+.md :where(code):not(:where(pre *))::before,
+.md :where(code):not(:where(pre *))::after {
+  content: "";
+}
+.md :where(code):not(:where(pre *)) {
+  @apply rounded bg-sunken px-1 py-0.5 text-[0.85em] font-normal;
+}
+.md pre {
+  @apply rounded-lg border border-line text-[12.5px] leading-relaxed;
+}
+.md :where(h1) {
+  @apply mb-3 mt-4 text-[1.35em] font-semibold;
+}
+.md :where(h2) {
+  @apply mb-2 mt-4 text-[1.15em] font-semibold;
+}
+.md :where(h3, h4) {
+  @apply mb-1.5 mt-3 text-[1.02em] font-semibold;
+}
+.md > :first-child {
+  @apply mt-0;
+}
+.md table {
+  @apply text-[13px];
+}
+
+.term {
+  @apply font-mono text-[12px] leading-[1.55] whitespace-pre-wrap break-all;
+}
+
+.btn {
+  @apply inline-flex items-center gap-1.5 rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg transition hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-50;
+}
+.btn-primary {
+  @apply inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-medium text-bg transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40;
+}
+.btn-ghost {
+  @apply inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-muted transition hover:bg-sunken hover:text-fg disabled:opacity-40;
+}
+.input {
+  @apply w-full rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-fg outline-none placeholder:text-faint focus:border-faint;
+}
+.chip {
+  @apply inline-flex items-center gap-1 rounded-md border border-line bg-panel px-1.5 py-0.5 text-[11px] text-muted;
+}

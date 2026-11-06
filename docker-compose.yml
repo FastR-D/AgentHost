@@ -1,0 +1,14 @@
+services:
+  agenthost:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      # AGENTHOST_TOKEN: change-me          # default: generated and printed in the logs
+      # OPENAI_API_KEY: sk-...              # or mount an existing ~/.codex below
+      AGENTHOST_SANDBOX: workspace-write
+    volumes:
+      - ./data:/data
+      - ./workspace:/workspace
+      - ~/.codex:/root/.codex                # Codex login / config.toml
+    restart: unless-stopped

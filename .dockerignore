@@ -1,0 +1,10 @@
+.git
+data
+workspace
+bin
+.tools
+web/node_modules
+web/dist/assets
+web/dist/index.html
+web/dist/.build-hash
+node-data

@@ -1,6 +1,6 @@
 # AgentHost 需求文档
 
-开发一个远程 Codex CLI 管理工具。
+开发一个远程 Codex CLI 管理工具。后端使用Go。前端基于：https://www.assistant-ui.com/
 
 ## 目标
 
@@ -17,6 +17,7 @@
 
 ## 核心能力
 
+- 提供单独的启动脚本，启动自动安装依赖，一般在容器中部署
 - 提供远程 Web 管理界面。
 - 支持连接和调用 Codex CLI。
 - 支持根据 Markdown 格式的 workflow 文档执行任务。
@@ -48,3 +49,20 @@
 3. AgentHost 根据 workflow 调度 Codex CLI 和其他任务。
 4. Agent 执行期间，界面实时展示 Agent 正在做的事和调用的命令。
 5. 用户可以查看完整任务链路、命令输出、状态变化和最终结果。
+
+---------------------------
+
+后续功能：
+
+1. UI需要兼容移动端兼容，这个工具大量时间都是手机上使用，内网穿透
+1个web控制多个后端容器跑任务
+
+2. 系统需要配置github key之类的，这样能拉代码。以及能配codex url key。这样不需要去后台操作
+
+3. 还需要一个简单的文件查看界面（也许不需要编辑），帮助看任务执行情况
+
+4. git项目可以把git同步做出功能，识别到当前界面有git，提供一个git push 按钮或者workflow，自动调用codex去git push
+
+
+5. 我们的主要用法是让Codex执行任务，用户可以提交任务描述来执行任务
+例如；让运行一个repo，repo里面有workflow描述以及可能有skill。我们一般不安装skill，而是让agenthost去执行任务（我们任务描述的md），这个md通过codex-cli调用一个本地代码，代码里面可能有skill，可能调用这个skill去解决问题。我们不全局安装skill，而是根据任务注入skill到code-cli

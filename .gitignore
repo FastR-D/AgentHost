@@ -1,0 +1,12 @@
+/data/
+/workspace/
+/bin/
+/agenthost
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+web/*.tsbuildinfo
+*.log
+/.tools/
+/.env
+/node-data/
