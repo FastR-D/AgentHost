@@ -43,10 +43,18 @@ export function HomeView() {
 
   const where = <WhereChip node={node} path={cwd} onChange={(p) => setCwd(p)} />;
 
+  const nodes = useStore((s) => s.nodes);
+  const noOnlineNode = nodes.length === 0 || !nodes.some((n) => n.online);
+
   return (
     <div className="flex h-full flex-col items-center overflow-y-auto px-4">
       <div className="w-full max-w-2xl pb-10 pt-[6vh] md:pt-[14vh]">
         <h1 className="mb-4 text-center text-xl font-semibold md:mb-6 md:text-2xl">要让 Codex 做什么？</h1>
+        {noOnlineNode && (
+          <div className="mb-4 rounded-xl border border-warn/40 bg-warn/10 px-4 py-3 text-[13px] text-warn">
+            还没有在线的服务器。请先用 <code className="rounded bg-warn/10 px-1">agenthost node --hub ... --token ...</code> 连接一台运行 Codex 的服务器，再回来发任务。
+          </div>
+        )}
         <div className="rounded-2xl border border-line bg-bg shadow-sm focus-within:border-faint">
           <textarea
             ref={ref}
