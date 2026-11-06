@@ -26,6 +26,8 @@ services:
     volumes:
       - ./node-data:/data
       - ./workspace:/workspace
-      - ~/.codex:/root/.codex:ro
+      # ~/.codex 是可选的：如果你在 Web 控制台的设置里填了 API Key，
+      # 这里不挂载也能用。只在本地有 codex login 配置且想复用时再挂载。
+      # - ~/.codex:/root/.codex:ro
     # 不映射端口：容器主动连 hub，外部不需要访问它
     restart: unless-stopped
