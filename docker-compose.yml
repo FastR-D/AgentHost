@@ -1,16 +1,14 @@
 services:
   agenthost:
-    build: .
-    # AgentHost runs inside an ubuntu:24.04 dev container.
-    # Codex CLI tasks execute directly in this container — no extra sidecar needed.
+    build:
+      context: .
+      target: runtime-web    # lightweight: no Codex CLI, no Node.js, no dev tools
     ports:
       - "8080:8080"
     environment:
-      # AGENTHOST_TOKEN: change-me          # default: generated and printed in the logs
-      # OPENAI_API_KEY: sk-...              # passed through to Codex if using an API key
-      AGENTHOST_SANDBOX: workspace-write    # read-only | workspace-write | danger-full-access
+      # AGENTHOST_TOKEN: change-me    # default: generated and printed in the logs
+      # AGENTHOST_AUTH: none          # disable auth (trusted networks only)
+      AGENTHOST_LOCAL_NODE: "off"     # all tasks run on remote node containers
     volumes:
-      - ./data:/data                        # agenthost state (sessions, runs, tokens)
-      - ./workspace:/workspace              # task working directory
-      - ~/.codex:/root/.codex               # Codex login / config.toml
+      - ./data:/data                  # sessions, runs, tokens
     restart: unless-stopped

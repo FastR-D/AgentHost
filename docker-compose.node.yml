@@ -1,5 +1,6 @@
 # 内网部署：容器以 node 角色运行，主动拨号到公网的 AgentHost Web 控制台。
 # 不需要对外暴露端口 —— 容器只往外连，可放在 NAT / 防火墙后面。
+# Codex CLI 和所有任务工作目录都在这个容器里。
 #
 # 用法：
 #   1. 在公网那台先起 Web 服务，到「服务器」页面拿到节点令牌
@@ -8,7 +9,9 @@
 
 services:
   agenthost-node:
-    build: .
+    build:
+      context: .
+      target: runtime-node   # ubuntu 24.04 dev container with Codex CLI
     environment:
       # —— node 角色必填 ——
       AGENTHOST_HUB: https://agenthost.example.com   # 公网 Web 控制台地址
@@ -25,7 +28,7 @@ services:
       AGENTHOST_WORKSPACE: /workspace
     volumes:
       - ./node-data:/data                  # 节点私有数据（如 git 密钥）
-      - ./workspace:/workspace             # 任务工作目录
+      - ./workspace:/workspace             # 任务工作目录（代码仓库 clone 在这）
       - ~/.codex:/root/.codex:ro           # codex 登录 / config.toml（只读挂载）
     # 不映射端口：容器主动连 hub，外部不需要访问它
     restart: unless-stopped
