@@ -50,12 +50,13 @@ function Login({ onDone }: { onDone: () => void }) {
             <div className="text-[12px] text-faint">输入访问令牌登录</div>
           </div>
         </div>
-        <div className="relative">
-          <KeyRound className="absolute left-3 top-2.5 h-4 w-4 text-faint" />
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-bg px-3 focus-within:border-faint">
+          <KeyRound className="h-4 w-4 shrink-0 text-faint" />
           <input
             autoFocus
             type="password"
-            className="input pl-9 font-mono"
+            className="w-full bg-transparent py-2 font-mono text-[13px] text-fg outline-none placeholder:text-faint"
+            style={{ fontSize: undefined }}
             placeholder="访问令牌"
             value={token}
             onChange={(e) => setToken(e.target.value)}

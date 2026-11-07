@@ -219,39 +219,49 @@ func (g *Registry) HandleConnect(w http.ResponseWriter, r *http.Request) {
 	info.Local = false
 	info.Addr = clientAddr(r)
 	info.ConnectedAt, info.LastSeen = time.Now(), time.Now()
-	rem := newRemote(ws, info)
 
-	reject := ""
+	// Validate the name before touching g.remotes.
 	switch {
 	case !reNodeName.MatchString(info.Name):
-		reject = "服务器名只能包含字母、数字、中文、点、下划线和连字符，最长 40 个字符"
+		ws.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation,
+				"服务器名只能包含字母、数字、中文、点、下划线和连字符，最长 40 个字符"),
+			time.Now().Add(time.Second))
+		ws.Close()
+		slog.Warn("rejected node: bad name", "name", info.Name)
+		return
 	case strings.EqualFold(info.Name, LocalID):
-		reject = "服务器名 local 已被本机占用，请换一个名字"
-	}
-	g.mu.Lock()
-	if reject == "" {
-		if old := g.remotes[info.ID]; old != nil {
-			// Kick the stale connection so the new one can take over.
-			g.mu.Unlock()
-			old.kick("被同名新连接取代")
-			// Wait briefly for the old serve() to exit and clean up.
-			for i := 0; i < 20; i++ {
-				time.Sleep(50 * time.Millisecond)
-				g.mu.Lock()
-				if g.remotes[info.ID] == nil {
-					break
-				}
-				g.mu.Unlock()
-			}
-			// mu is locked here
-		}
-	}
-	if reject != "" {
-		g.mu.Unlock()
-		rem.kick(reject)
-		slog.Warn("rejected node", "name", info.Name, "addr", info.Addr, "reason", reject)
+		ws.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation,
+				"服务器名 local 已被本机占用，请换一个名字"),
+			time.Now().Add(time.Second))
+		ws.Close()
+		slog.Warn("rejected node: reserved name", "name", info.Name)
 		return
 	}
+
+	rem := newRemote(ws, info)
+
+	// If a connection with the same name already exists, kick it and wait for
+	// its serve() goroutine to clean up before registering the new one.
+	g.mu.Lock()
+	if old := g.remotes[info.ID]; old != nil {
+		g.mu.Unlock()
+		old.kick("被同名新连接取代")
+		// Wait up to 1 s for the old handler to remove itself from g.remotes.
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			time.Sleep(25 * time.Millisecond)
+			g.mu.Lock()
+			gone := g.remotes[info.ID] == nil
+			g.mu.Unlock()
+			if gone {
+				break
+			}
+		}
+		g.mu.Lock() // re-acquire for the registration below
+	}
+	// g.mu is locked here in all paths.
 	g.remotes[info.ID] = rem
 	g.known[info.ID] = info
 	g.mu.Unlock()

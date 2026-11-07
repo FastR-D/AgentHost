@@ -11,3 +11,4 @@ web/*.tsbuildinfo
 /.env
 /deploy/.fab.env
 /node-data/
+__pycache__

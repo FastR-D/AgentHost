@@ -1,5 +1,6 @@
 # ── Stage 1: build the web UI ─────────────────────────────────────────────────
-FROM node:20-slim AS web-builder
+# Run on the build host's native arch (arm64/x86) — Node.js crashes under QEMU.
+FROM --platform=$BUILDPLATFORM node:20-slim AS web-builder
 
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
@@ -26,7 +27,10 @@ COPY . .
 COPY --from=web-builder /build/web/dist ./web/dist
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -trimpath -ldflags "-s -w" \
+    go build -trimpath \
+    -ldflags "-s -w \
+      -X main.buildCommit=$(git rev-parse --short HEAD 2>/dev/null || echo dev) \
+      -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -o /agenthost ./cmd/agenthost
 
 

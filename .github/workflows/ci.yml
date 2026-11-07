@@ -62,7 +62,10 @@ jobs:
       - name: Build linux/amd64 binary
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-            go build -trimpath -ldflags "-s -w" \
+            go build -trimpath \
+            -ldflags "-s -w \
+              -X main.buildCommit=$(git rev-parse --short HEAD) \
+              -X main.buildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -o bin/agenthost ./cmd/agenthost
 
       - name: Upload binary artifact

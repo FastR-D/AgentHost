@@ -66,3 +66,7 @@
 
 5. 我们的主要用法是让Codex执行任务，用户可以提交任务描述来执行任务
 例如；让运行一个repo，repo里面有workflow描述以及可能有skill。我们一般不安装skill，而是让agenthost去执行任务（我们任务描述的md），这个md通过codex-cli调用一个本地代码，代码里面可能有skill，可能调用这个skill去解决问题。我们不全局安装skill，而是根据任务注入skill到code-cli
+
+
+6. 长远构想：多用户管理以及自动容器分配，在服务器可以加个一个除了web之前多manger node角色，用docker in docker部署，这个manager可以自己部署其他worker node都是dev container。然后给不同账号分配node。这样后面就支持整个组的人使用，也可以给整个班的人每人分配一个容器，能在里面用ai干活。
+

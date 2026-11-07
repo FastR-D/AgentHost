@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import clsx from "clsx";
-import { ClipboardList, FolderOpen, LayoutList, LogOut, MessageSquarePlus, Server, Settings, Trash2 } from "lucide-react";
+import { ClipboardList, FolderOpen, LayoutList, LogOut, MessageSquarePlus, Server, ServerCrash, Settings, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useStore, navigate, guard, useCurrentNode, type Route } from "../store";
 import { isActive } from "../types";
@@ -53,6 +53,15 @@ export function Sidebar({ route, className }: { route: Route; className?: string
       <div className="px-2 pt-1">
         <ServerButton />
       </div>
+      {!nodes.some((n) => n.online) && (
+        <button
+          className="mx-2 mt-1 flex items-center gap-2 rounded-lg border border-dashed border-warn/50 bg-warn/5 px-3 py-2.5 text-left text-[13px] text-warn transition hover:bg-warn/10"
+          onClick={() => navigate({ page: "servers" })}
+        >
+          <ServerCrash className="h-4 w-4 shrink-0" />
+          <span>没有在线的服务器，点击添加</span>
+        </button>
+      )}
       <div className="space-y-0.5 px-2 py-2">
         <button className={navItem(route.page === "home")} onClick={() => navigate({ page: "home" })}>
           <MessageSquarePlus className="h-4 w-4" /> 新任务

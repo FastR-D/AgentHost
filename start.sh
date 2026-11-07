@@ -40,8 +40,10 @@ _daemon_start() {
   export AGENTHOST_DATA="${AGENTHOST_DATA:-$ROOT/data}"
   export AGENTHOST_WORKSPACE="${AGENTHOST_WORKSPACE:-$ROOT/workspace}"
   mkdir -p "$AGENTHOST_DATA" "$AGENTHOST_WORKSPACE"
-  nohup "$ROOT/bin/agenthost" >> "$LOG_FILE" 2>&1 &
-  echo $! > "$PID_FILE"
+  setsid "$ROOT/bin/agenthost" >> "$LOG_FILE" 2>&1 </dev/null &
+  BGPID=$!
+  disown $BGPID
+  echo $BGPID > "$PID_FILE"
   echo "[agenthost] started (pid $!), waiting for server..."
   for i in $(seq 1 20); do
     if grep -q "AgentHost is running" "$LOG_FILE" 2>/dev/null; then break; fi
@@ -278,10 +280,16 @@ build_go() {
   if [[ $REBUILD == 0 && -x "$ROOT/bin/agenthost" && -f "$stamp" && "$(cat "$stamp")" == "$h" ]]; then
     log "server binary is up to date"; return
   fi
-  # No source found (release package) — use pre-built binary as-is.
-  if [[ $REBUILD == 0 && -x "$ROOT/bin/agenthost" ]] && \
-     ! find "$ROOT" -maxdepth 3 -name '*.go' -not -path '*/.tools/*' -quit 2>/dev/null | grep -q .; then
-    log "no source found; using pre-built binary at $ROOT/bin/agenthost"; return
+  # No source found (release package) — use pre-built binary only if arch matches.
+  local _has_src; _has_src=$(find "$ROOT" -maxdepth 3 -name '*.go' -not -path '*/.tools/*' 2>/dev/null | head -1)
+  if [[ $REBUILD == 0 && -x "$ROOT/bin/agenthost" && -z "$_has_src" ]]; then
+    local want got
+    case "$(arch)" in amd64) want="3e";; arm64) want="b7";; *) want="";; esac
+    got=$(dd if="$ROOT/bin/agenthost" bs=1 skip=18 count=1 2>/dev/null | od -A n -t x1 | tr -d ' \n')
+    if [[ -z "$want" || "$got" == "$want" ]]; then
+      log "no source found; using pre-built binary at $ROOT/bin/agenthost"; return
+    fi
+    warn "binary arch mismatch (have $got, need $want); rebuilding from source"
   fi
   log "building server"
   mkdir -p "$ROOT/bin"

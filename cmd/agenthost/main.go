@@ -31,6 +31,12 @@ import (
 
 const version = "0.1.0"
 
+// build metadata injected by -ldflags
+var (
+	buildCommit = "dev"
+	buildDate   = "unknown"
+)
+
 func env(key, def string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
@@ -47,7 +53,7 @@ func main() {
 			os.Exit(runCheck(os.Args[2:]))
 		}
 	}
-	addr := flag.String("addr", env("AGENTHOST_ADDR", "0.0.0.0:80"), "listen address (AGENTHOST_ADDR)")
+	addr := flag.String("addr", env("AGENTHOST_ADDR", "0.0.0.0:8080"), "listen address (AGENTHOST_ADDR)")
 	dataDir := flag.String("data", env("AGENTHOST_DATA", "./data"), "data directory (AGENTHOST_DATA)")
 	workspace := flag.String("workspace", env("AGENTHOST_WORKSPACE", "./workspace"), "default working directory for tasks (AGENTHOST_WORKSPACE)")
 	wfDir := flag.String("workflows", env("AGENTHOST_WORKFLOWS", ""), "workflow library directory (AGENTHOST_WORKFLOWS, default <data>/workflows)")
@@ -147,7 +153,8 @@ func main() {
 	}
 
 	info := map[string]any{
-		"version":        version,
+		"version":        version + "-" + buildCommit,
+		"buildDate":      buildDate,
 		"codexBin":       codexBin,
 		"codexVersion":   codexVersion,
 		"codexArgs":      codexArgs,
