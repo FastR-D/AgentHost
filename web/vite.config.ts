@@ -14,5 +14,17 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // React core — cached independently, almost never changes
+          "react-core": ["react", "react-dom"],
+          // assistant-ui — large, infrequently updated
+          "assistant-ui": ["@assistant-ui/react", "@assistant-ui/react-markdown"],
+          // Markdown pipeline
+          "markdown": ["react-markdown", "remark-gfm"],
+        },
+      },
+    },
   },
 });
