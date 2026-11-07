@@ -1,14 +1,14 @@
 import { useState } from "react";
 import clsx from "clsx";
-import { Bot, ChevronRight, Loader2, Pause, Play, Square, Users } from "lucide-react";
+import { Bot, ChevronRight, Loader2, Pause, Play, RotateCcw, Square, StepForward, Users } from "lucide-react";
 import type { Item, Run, Step, SubAgent } from "../types";
 import { isActive } from "../types";
 import { control } from "../store";
-import { Elapsed, StatusIcon, between, fmtDuration, fmtTokens } from "../lib/format";
+import { Elapsed, StatusIcon, between, fmtDuration, fmtTokens, statusLabel } from "../lib/format";
 import { ItemView } from "./ItemView";
 import { finalItem } from "./messages";
 import { isMultiParallel, parallelLabel } from "./Parallel";
-import { ProgressBar, RunControls, progressUnits } from "./RunControls";
+import { ProgressBar, RunControls, canContinue, progressUnits } from "./RunControls";
 
 /** Tokens of a run, sub-agents included. */
 const runTokens = (run: Run) =>
@@ -40,30 +40,80 @@ function nowText(run: Run) {
   return run.activity || "执行中…";
 }
 
-/** Pause / resume / stop, as small icon buttons next to the process line. */
-function LiveControls({ run }: { run: Run }) {
+/** The session's task, pinned under the header: what it is doing, its
+ *  progress and the controls. Tap to jump to its execution in the conversation. */
+export function TaskBar({ run }: { run: Run }) {
+  const active = isActive(run.status);
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (a: "pause" | "resume" | "stop") => {
+  const tokens = runTokens(run);
+  const act = async (a: "pause" | "resume" | "stop" | "retry" | "continue") => {
     setBusy(a);
     await control(run.id, a);
     setBusy(null);
   };
   const icon = "h-3.5 w-3.5";
   const spin = <Loader2 className={clsx(icon, "animate-spin")} />;
+  const jump = () => document.getElementById(`proc-${run.id}`)?.scrollIntoView({ block: "center", behavior: "smooth" });
   return (
-    <div className="flex shrink-0 items-center">
-      {run.status === "paused" ? (
-        <button className="btn-ghost !p-2" onClick={() => act("resume")} disabled={!!busy} title="继续">
-          {busy === "resume" ? spin : <Play className={icon} />}
+    <div className={clsx("border-b border-line px-3 py-2 md:px-4", active ? "bg-info/5" : run.status === "interrupted" ? "bg-warn/5" : "bg-panel")}>
+      <div className="flex items-center gap-2">
+        <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={jump} title="跳到执行过程">
+          {run.status === "running" ? (
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
+          ) : (
+            <StatusIcon status={run.status} className="h-4 w-4 shrink-0" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className={clsx("block truncate text-[13px]", run.status === "running" ? "shimmer-text font-medium" : "text-fg")}>
+              {active ? nowText(run) : run.status === "interrupted" ? "已中断，可以继续" : statusLabel[run.status]}
+            </span>
+            <span className="block truncate text-[11px] text-faint">
+              {run.taskTitle || run.title}
+              {" · "}
+              {active ? (
+                <>
+                  <Elapsed start={run.startedAt ?? run.createdAt} running />
+                  {isMultiParallel(run.parallel) && <> · {parallelLabel(run.parallel)}</>}
+                </>
+              ) : (
+                [summary(run), tokens ? `${fmtTokens(tokens)} tokens` : ""].filter(Boolean).join(" · ")
+              )}
+            </span>
+          </span>
         </button>
-      ) : (
-        <button className="btn-ghost !p-2" onClick={() => act("pause")} disabled={!!busy} title="暂停">
-          {busy === "pause" ? spin : <Pause className={icon} />}
-        </button>
+        <div className="flex shrink-0 items-center">
+          {active && run.status !== "paused" && (
+            <button className="btn-ghost !p-2" onClick={() => act("pause")} disabled={!!busy} title="暂停">
+              {busy === "pause" ? spin : <Pause className={icon} />}
+            </button>
+          )}
+          {run.status === "paused" && (
+            <button className="btn-ghost !p-2" onClick={() => act("resume")} disabled={!!busy} title="继续">
+              {busy === "resume" ? spin : <Play className={icon} />}
+            </button>
+          )}
+          {active && (
+            <button className="btn-ghost !p-2 hover:!text-bad" onClick={() => act("stop")} disabled={!!busy} title="停止">
+              {busy === "stop" ? spin : <Square className={icon} />}
+            </button>
+          )}
+          {canContinue(run) && (
+            <button className="btn !px-2 !py-1 text-[12px]" onClick={() => act("continue")} disabled={!!busy} title="在原来的 Codex 会话上接着做">
+              {busy === "continue" ? spin : <StepForward className={icon} />} 继续
+            </button>
+          )}
+          {!active && (
+            <button className="btn-ghost !p-2" onClick={() => act("retry")} disabled={!!busy} title="用相同的要求重新运行">
+              <RotateCcw className={icon} />
+            </button>
+          )}
+        </div>
+      </div>
+      {active && progressUnits(run).length > 1 && (
+        <div className="mt-1.5">
+          <ProgressBar run={run} />
+        </div>
       )}
-      <button className="btn-ghost !p-2 hover:!text-bad" onClick={() => act("stop")} disabled={!!busy} title="停止">
-        {busy === "stop" ? spin : <Square className={icon} />}
-      </button>
     </div>
   );
 }
@@ -142,8 +192,8 @@ function SubAgentCard({ agent, items }: { agent: SubAgent; items: Item[] }) {
   );
 }
 
-/** In the conversation: a task's execution — state, progress and controls on
- *  one line; tap it to unfold everything it did right here. */
+/** In the conversation: one line standing for a task's execution; tap it to
+ *  unfold everything it did right here. State and controls live on the card. */
 export function ProcessLine({ run }: { run: Run }) {
   const active = isActive(run.status);
   const [open, setOpen] = useState(() => openRuns.has(run.id));
@@ -152,48 +202,17 @@ export function ProcessLine({ run }: { run: Run }) {
     else openRuns.add(run.id);
     setOpen(!open);
   };
-  const tokens = runTokens(run);
   const st = run.steps[0];
-  const sub = active
-    ? [
-        run.status === "paused" ? "已暂停" : "执行中",
-        isMultiParallel(run.parallel) ? parallelLabel(run.parallel) : "",
-      ]
-    : [summary(run), tokens ? `${fmtTokens(tokens)} tokens` : ""];
   return (
-    <div className={clsx("my-1 w-full max-w-full rounded-lg border", active ? "border-info/40 bg-info/5" : "border-line bg-panel")}>
-      <div className="flex items-center gap-1 pr-1">
-        <button onClick={toggle} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left text-[12.5px]" title={open ? "收起执行过程" : "展开执行过程"}>
-          {run.status === "running" ? (
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" />
-          ) : run.status === "paused" ? (
-            <Pause className="h-3.5 w-3.5 shrink-0 text-warn" />
-          ) : (
-            <StatusIcon status={run.status} className="h-3.5 w-3.5 shrink-0" />
-          )}
-          <span className="min-w-0 flex-1">
-            <span className={clsx("block truncate", run.status === "running" ? "shimmer-text font-medium" : "text-fg")}>
-              {active ? nowText(run) : "执行过程"}
-            </span>
-            <span className="block truncate text-[11px] text-faint">
-              {sub.filter(Boolean).join(" · ")}
-              {active && (
-                <>
-                  {" · "}
-                  <Elapsed start={run.startedAt ?? run.createdAt} running />
-                </>
-              )}
-            </span>
-          </span>
-          <ChevronRight className={clsx("h-3.5 w-3.5 shrink-0 text-faint transition-transform", open && "rotate-90")} />
-        </button>
-        {active && <LiveControls run={run} />}
-      </div>
-      {active && progressUnits(run).length > 1 && (
-        <div className="px-3 pb-2">
-          <ProgressBar run={run} />
-        </div>
-      )}
+    <div id={`proc-${run.id}`} className="my-1 w-full max-w-full rounded-lg border border-line bg-panel">
+      <button onClick={toggle} className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12.5px] text-muted" title={open ? "收起执行过程" : "展开执行过程"}>
+        {active ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" /> : <StatusIcon status={run.status} className="h-3.5 w-3.5 shrink-0" />}
+        <span className="min-w-0 flex-1 truncate">
+          <span className="text-fg">执行过程</span>
+          {summary(run) && <> · {summary(run)}</>}
+        </span>
+        <ChevronRight className={clsx("h-3.5 w-3.5 shrink-0 text-faint transition-transform", open && "rotate-90")} />
+      </button>
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2 text-[14px] leading-relaxed">
           {(st?.items ?? []).length === 0 ? (
@@ -201,6 +220,11 @@ export function ProcessLine({ run }: { run: Run }) {
           ) : (
             // The final answer is shown right below in the conversation.
             <Timeline step={st} hide={active ? undefined : finalItem(run)?.id} />
+          )}
+          {active && (
+            <div className="flex items-center gap-2 pt-1 text-[12.5px] text-info">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> {nowText(run)}
+            </div>
           )}
           <div className="border-t border-line pt-2">
             <RunControls run={run} size="xs" />
@@ -217,6 +241,13 @@ export function OutcomeLine({ run }: { run: Run }) {
     return (
       <div className="my-1 rounded-lg border border-bad/30 bg-bad/5 px-3 py-2 text-[13px] text-bad">
         <span className="font-medium">失败</span>
+        {run.error && <span className="whitespace-pre-wrap opacity-90">：{run.error}</span>}
+      </div>
+    );
+  if (run.status === "interrupted")
+    return (
+      <div className="my-1 rounded-lg border border-warn/30 bg-warn/5 px-3 py-2 text-[13px] text-warn">
+        <span className="font-medium">已中断</span>
         {run.error && <span className="whitespace-pre-wrap opacity-90">：{run.error}</span>}
       </div>
     );

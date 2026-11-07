@@ -99,7 +99,7 @@ export const api = {
   cleanupRuns: (node: string, olderThanDays: number, dryRun = false) =>
     req<{ count: number }>("POST", "/runs/cleanup", { node, olderThanDays, dryRun }),
   run: (id: string) => req<Run>("GET", `/runs/${encodeURIComponent(id)}`),
-  control: (id: string, action: "pause" | "resume" | "stop" | "retry") =>
+  control: (id: string, action: "pause" | "resume" | "stop" | "retry" | "continue") =>
     req<any>("POST", `/runs/${encodeURIComponent(id)}/${action}`),
   logs: (id: string, after = 0) => req<LogEntry[]>("GET", `/runs/${encodeURIComponent(id)}/logs?after=${after}`),
 

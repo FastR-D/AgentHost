@@ -499,11 +499,24 @@ func TestPersistenceMarksInterruptedRuns(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := e2.snapshot(id)
-	if r.Status != StatusFailed || !strings.Contains(r.Error, "重启") {
+	if r.Status != StatusInterrupted || !strings.Contains(r.Error, "重启") {
 		t.Fatalf("reloaded run: %s %q", r.Status, r.Error)
 	}
 	_ = e.Stop(id)
 	waitDone(t, e, id)
+	// The thread was saved when it started, so continuing picks it up.
+	thread := r.Steps[0].ThreadID
+	if thread == "" {
+		t.Fatal("thread id not recorded")
+	}
+	raw, err = e2.Continue(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := waitDone(t, e2, runIDOf(t, raw))
+	if c.Status != StatusCompleted || c.Steps[0].ThreadID != thread || !strings.HasPrefix(c.Output, "DONE: 你刚才的工作被中断") {
+		t.Fatalf("continue: %s thread=%s want %s out=%q", c.Status, c.Steps[0].ThreadID, thread, c.Output)
+	}
 }
 
 // Tasks in a session bound to a remote server run there, over the node connection.
@@ -556,7 +569,7 @@ func TestRemoteServer(t *testing.T) {
 	cancel()
 	<-agentDone
 	r = waitDone(t, e, id)
-	if r.Status != StatusFailed || !strings.Contains(r.Steps[0].Error, "退出") {
+	if r.Status != StatusInterrupted || !strings.Contains(r.Steps[0].Error, "连接中断") {
 		t.Fatalf("lost node: %s %q", r.Status, r.Steps[0].Error)
 	}
 	if _, err := e.StartChat(ChatRequest{SessionID: s.ID, Text: "again"}); err == nil || !strings.Contains(err.Error(), "不在线") {

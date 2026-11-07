@@ -234,6 +234,15 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 	idMu.Unlock()
 	e.mu.Lock()
 	st.ThreadID = thr.Thread.ID
+	// Saved right away: if this turn is cut short, the next one still continues this thread.
+	if s := e.sessions[r.SessionID]; s != nil {
+		if manager {
+			s.ManagerThreadID = thr.Thread.ID
+		} else {
+			s.ThreadID = thr.Thread.ID
+		}
+		e.touchSession(s)
+	}
 	e.touchRun(r)
 	e.mu.Unlock()
 
@@ -327,7 +336,7 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 			return "", errors.New(msg)
 		}
 	case <-client.Done():
-		return "", fmt.Errorf("Codex CLI 进程意外退出：%v", client.ExitErr())
+		return "", fmt.Errorf("%w：Codex CLI 进程意外退出（%v），可以点“继续”接着做", errInterrupted, client.ExitErr())
 	case <-ctl.pauseCh:
 		e.setStepActivity2(r, st, "正在暂停…")
 		interrupt(20 * time.Second)
@@ -511,7 +520,9 @@ func (e *Engine) onCodexNotification(r *Run, st *Step, method string, params jso
 }
 
 // progressGuide tells Codex when to report progress.
-const progressGuide = `你由 AgentHost 远程调度，用户多半在手机上看进度。任务需要多个步骤时：动手前调用一次 report_progress 列出全部步骤（简短的动词短语，3–8 步，状态 pending），之后每个步骤开始时标 running、结束时标 completed（失败标 failed，不需要做的标 skipped），可以在 note 里写一句结果。每次传完整列表。简单的一步就能完成的事不需要汇报。`
+const progressGuide = `你由 AgentHost 远程调度，用户多半在手机上看进度。任务需要多个步骤时：动手前调用一次 report_progress 列出全部步骤（简短的动词短语，3–8 步，状态 pending），之后每个步骤开始时标 running、结束时标 completed（失败标 failed，不需要做的标 skipped），可以在 note 里写一句结果。每次传完整列表。简单的一步就能完成的事不需要汇报。
+
+需要长时间运行的程序（服务、分析工具、训练、带循环的脚本等）不要在前台等它，要用 setsid 放到后台，这样回合结束后它还能继续跑：setsid nohup <命令> > <日志文件> 2>&1 < /dev/null & echo $! > <pid 文件>。启动后检查一下确实跑起来了，告诉用户日志和 pid 文件在哪，然后结束本轮。之后用户问起时，再看日志和 pid 汇报情况。`
 
 // progressTool lets the agent show its steps in the UI.
 var progressTool = map[string]any{

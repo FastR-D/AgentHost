@@ -512,8 +512,12 @@ func (s *Server) routeRuns(w http.ResponseWriter, r *http.Request, parts []strin
 			err = s.eng.Resume(id)
 		case "stop":
 			err = s.eng.Stop(id)
-		case "retry":
-			b, err := s.eng.Retry(id)
+		case "retry", "continue":
+			start := s.eng.Retry
+			if parts[1] == "continue" {
+				start = s.eng.Continue
+			}
+			b, err := start(id)
 			if err != nil {
 				return err
 			}

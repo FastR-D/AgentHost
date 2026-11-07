@@ -37,6 +37,8 @@ var (
 	ErrNotFound = errors.New("not found")
 	ErrBusy     = errors.New("会话中已有正在执行的任务，请先等待完成、暂停或停止")
 	errPaused   = errors.New("paused")
+	// errInterrupted: Codex went away without finishing the turn.
+	errInterrupted = errors.New("任务被中断")
 )
 
 type Engine struct {
@@ -64,6 +66,8 @@ type runCtl struct {
 	step    *stepCtl // the running Codex; nil before it starts and after it ends
 	paused  bool
 	stopped bool
+	// shutdown: AgentHost itself is stopping; the run is interrupted, not stopped.
+	shutdown bool
 }
 
 type stepCtl struct {
@@ -156,9 +160,9 @@ func (e *Engine) load() error {
 	}
 	for _, r := range runs {
 		if r.Status.Active() {
-			// The process that ran it is gone; record that honestly.
-			r.Status = StatusFailed
-			r.Error = "AgentHost 重启，任务被中断（可点击“重新运行”）"
+			// The process that ran it is gone; its Codex thread is not.
+			r.Status = StatusInterrupted
+			r.Error = "AgentHost 重启，任务被中断，可以点“继续”接着做"
 			r.EndedAt = now()
 			r.Activity = ""
 			for _, st := range r.Steps {
@@ -166,8 +170,8 @@ func (e *Engine) load() error {
 					if st.Status == StatusPending {
 						st.Status = StatusSkipped
 					} else {
-						st.Status = StatusFailed
-						st.Error = "AgentHost 重启，步骤被中断"
+						st.Status = StatusInterrupted
+						st.Error = "AgentHost 重启，被中断"
 						st.EndedAt = r.EndedAt
 					}
 					st.Activity = ""
@@ -780,6 +784,38 @@ func (e *Engine) Retry(runID string) (json.RawMessage, error) {
 	return e.launch(s, r)
 }
 
+// continuePrompt picks a task up again on its own Codex thread.
+const continuePrompt = "你刚才的工作被中断或停止了。先检查当前状态（文件、进程、日志），再接着把任务做完。"
+
+// Continue picks a finished task up again on the session's Codex thread:
+// after an interruption, a stop or a failure. Unlike Retry, it does not
+// repeat the original request.
+func (e *Engine) Continue(runID string) (json.RawMessage, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	old := e.runs[runID]
+	if old == nil {
+		return nil, ErrNotFound
+	}
+	if old.Kind == KindManager {
+		return nil, errors.New("管家的回答不能继续，直接再问一次就行")
+	}
+	s := e.sessions[old.SessionID]
+	if s == nil {
+		return nil, ErrNotFound
+	}
+	if e.sessionBusy(s) {
+		return nil, ErrBusy
+	}
+	r := &Run{
+		ID: newID("r"), SessionID: s.ID, Kind: KindChat, Title: "继续：" + strings.TrimPrefix(old.Title, "继续："), Prompt: continuePrompt,
+		Cwd: s.Cwd, NodeID: s.NodeID, Model: old.Model, Sandbox: CodexSandbox, Status: StatusQueued, CreatedAt: time.Now(),
+		Parallel: old.Parallel,
+	}
+	r.Steps = codexStep("codex", "Codex", s.Cwd, continuePrompt)
+	return e.launch(s, r)
+}
+
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
 		if strings.TrimSpace(v) != "" {
@@ -890,7 +926,7 @@ func (e *Engine) StopAll(timeout time.Duration) {
 	var waits []chan struct{}
 	for id, rc := range e.ctls {
 		if r := e.runs[id]; r != nil && r.Status.Active() {
-			rc.stopped = true
+			rc.stopped, rc.shutdown = true, true
 			rc.cancel()
 			waits = append(waits, rc.done)
 		}

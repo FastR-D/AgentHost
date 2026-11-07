@@ -1,6 +1,6 @@
 import { useState } from "react";
 import clsx from "clsx";
-import { Loader2, Pause, Play, RotateCcw, ScrollText, Square } from "lucide-react";
+import { Loader2, Pause, Play, RotateCcw, ScrollText, Square, StepForward } from "lucide-react";
 import type { Run } from "../types";
 import { isActive } from "../types";
 import { useStore, control, openLogs } from "../store";
@@ -9,12 +9,16 @@ export function useRun(runId: string): Run | undefined {
   return useStore((s) => s.runs[runId]);
 }
 
-/** Pause / resume / stop / retry / logs buttons for a run. */
+/** A task that ended without finishing can be picked up on its own Codex thread. */
+export const canContinue = (run: Run) =>
+  run.kind !== "manager" && (run.status === "interrupted" || run.status === "stopped" || run.status === "failed");
+
+/** Pause / resume / stop / continue / retry / logs buttons for a run. */
 export function RunControls({ run, size = "sm" }: { run: Run; size?: "sm" | "xs" }) {
   const active = isActive(run.status);
   const cls = size === "xs" ? "btn-ghost !px-1.5 !py-0.5 text-[12px]" : "btn !py-1";
   const [busy, setBusy] = useState<string | null>(null);
-  const act = async (a: "pause" | "resume" | "stop" | "retry") => {
+  const act = async (a: "pause" | "resume" | "stop" | "retry" | "continue") => {
     setBusy(a);
     await control(run.id, a);
     setBusy(null);
@@ -34,6 +38,11 @@ export function RunControls({ run, size = "sm" }: { run: Run; size?: "sm" | "xs"
       {active && (
         <button className={cls} onClick={() => act("stop")} disabled={!!busy} title="停止任务">
           {busy === "stop" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />} 停止
+        </button>
+      )}
+      {canContinue(run) && (
+        <button className={cls} onClick={() => act("continue")} disabled={!!busy} title="在原来的 Codex 会话上接着做">
+          {busy === "continue" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <StepForward className="h-3.5 w-3.5" />} 继续
         </button>
       )}
       {!active && run.kind !== "manager" && (

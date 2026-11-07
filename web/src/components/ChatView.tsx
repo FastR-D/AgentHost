@@ -11,6 +11,7 @@ import { Thread } from "./Thread";
 import { WhereChip } from "./DirPicker";
 import { GitBar } from "./GitBar";
 import { TaskSheet, runTaskInSession } from "./TaskSheet";
+import { TaskBar } from "./TaskBar";
 
 function textOf(m: AppendMessage): string {
   return m.content
@@ -89,6 +90,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <SessionHeader sessionId={sessionId} lastRunId={lastTask?.id} />
+      {lastTask && <TaskBar run={lastTask} />}
       <div className="min-h-0 flex-1">
         <AssistantRuntimeProvider runtime={runtime}>
           <Thread taskRunning={taskRunning} onTask={() => setTaskOpen(true)} />

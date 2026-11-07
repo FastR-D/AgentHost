@@ -1,4 +1,5 @@
 export type Status =
+  | "interrupted"
   | "queued"
   | "pending"
   | "running"
@@ -196,7 +197,7 @@ export interface Info {
 
 export const isActive = (s?: Status | "") => s === "queued" || s === "running" || s === "paused";
 export const isTerminal = (s?: Status | "") =>
-  s === "completed" || s === "failed" || s === "stopped" || s === "skipped";
+  s === "completed" || s === "failed" || s === "stopped" || s === "skipped" || s === "interrupted";
 
 /** A saved task: plain Markdown, plus where it usually runs. */
 export interface Task {

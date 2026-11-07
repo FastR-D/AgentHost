@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Check, CircleDashed, CircleSlash, Loader2, Pause, Square, X, Clock } from "lucide-react";
+import { Check, CircleDashed, CircleSlash, Loader2, Pause, Square, X, Clock, Unplug } from "lucide-react";
 import type { Status } from "../types";
 
 export const statusLabel: Record<string, string> = {
@@ -11,6 +11,7 @@ export const statusLabel: Record<string, string> = {
   completed: "已完成",
   failed: "失败",
   stopped: "已停止",
+  interrupted: "已中断",
   skipped: "已跳过",
   declined: "已拒绝",
   "": "空闲",
@@ -24,6 +25,7 @@ export const statusTone: Record<string, string> = {
   completed: "text-ok",
   failed: "text-bad",
   stopped: "text-muted",
+  interrupted: "text-warn",
   skipped: "text-faint",
   declined: "text-warn",
 };
@@ -41,6 +43,8 @@ export function StatusIcon({ status, className }: { status?: Status | string; cl
       return <Pause className={cls} />;
     case "stopped":
       return <Square className={cls} />;
+    case "interrupted":
+      return <Unplug className={cls} />;
     case "skipped":
     case "declined":
       return <CircleSlash className={cls} />;

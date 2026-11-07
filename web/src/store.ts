@@ -368,7 +368,7 @@ export function closeLogs() {
   });
 }
 
-export async function control(runId: string, action: "pause" | "resume" | "stop" | "retry") {
+export async function control(runId: string, action: "pause" | "resume" | "stop" | "retry" | "continue") {
   const res = await guard(api.control(runId, action));
   if (res && action === "retry" && res.session?.id) navigate({ page: "session", id: res.session.id });
   return res;

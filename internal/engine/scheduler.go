@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -57,8 +58,12 @@ func (e *Engine) execRun(r *Run, rc *runCtl) {
 	st.EndedAt = now()
 	st.Activity = ""
 	switch {
+	case rc.shutdown:
+		st.Status, st.Error = StatusInterrupted, "AgentHost 重启，任务被中断，可以点“继续”接着做"
 	case rc.ctx.Err() != nil:
 		st.Status, st.Error = StatusStopped, "已停止"
+	case errors.Is(err, errInterrupted):
+		st.Status, st.Error = StatusInterrupted, err.Error()
 	case err != nil:
 		st.Status, st.Error, st.Output = StatusFailed, err.Error(), out
 	default:
@@ -108,6 +113,8 @@ func (e *Engine) finishRun(r *Run, rc *runCtl) {
 		st.Status = StatusStopped
 	}
 	switch {
+	case st.Status == StatusInterrupted:
+		r.Status, r.Error = StatusInterrupted, st.Error
 	case rc.ctx.Err() != nil || st.Status == StatusStopped:
 		r.Status, r.Error = StatusStopped, "任务已被停止"
 	case st.Status == StatusFailed:

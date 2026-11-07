@@ -16,11 +16,15 @@ const (
 	StatusFailed    Status = "failed"
 	StatusStopped   Status = "stopped"
 	StatusSkipped   Status = "skipped"
+	// StatusInterrupted: the Codex process went away mid-turn (AgentHost
+	// restarted, the server disconnected, Codex crashed). Its thread is kept;
+	// Continue picks it up again.
+	StatusInterrupted Status = "interrupted"
 )
 
 func (s Status) Terminal() bool {
 	switch s {
-	case StatusCompleted, StatusFailed, StatusStopped, StatusSkipped:
+	case StatusCompleted, StatusFailed, StatusStopped, StatusSkipped, StatusInterrupted:
 		return true
 	}
 	return false
