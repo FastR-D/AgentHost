@@ -9,4 +9,5 @@ web/*.tsbuildinfo
 *.log
 /.tools/
 /.env
+/deploy/.fab.env
 /node-data/

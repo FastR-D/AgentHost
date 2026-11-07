@@ -1,0 +1,44 @@
+name: Deploy
+
+# Runs automatically after a Release is published (i.e. after release.yml succeeds).
+# Can also be triggered manually from the Actions tab.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "SSH target (e.g. root@1.2.3.4)"
+        required: false
+        default: ""
+
+jobs:
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Fabric
+        run: pip install fabric
+
+      - name: Write SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+
+      - name: Deploy
+        env:
+          AGENTHOST_HOST: ${{ inputs.host || secrets.DEPLOY_HOST }}
+          AGENTHOST_DIR:  ${{ secrets.DEPLOY_DIR || '/opt/agenthost' }}
+        run: |
+          cd deploy
+          fab deploy --host "$AGENTHOST_HOST" \
+            -i ~/.ssh/deploy_key

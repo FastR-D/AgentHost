@@ -37,7 +37,6 @@ _daemon_start() {
     echo "[agenthost] already running (pid $(cat "$PID_FILE"))"
     return 0
   fi
-  _prepare_env
   export AGENTHOST_DATA="${AGENTHOST_DATA:-$ROOT/data}"
   export AGENTHOST_WORKSPACE="${AGENTHOST_WORKSPACE:-$ROOT/workspace}"
   mkdir -p "$AGENTHOST_DATA" "$AGENTHOST_WORKSPACE"
@@ -76,12 +75,15 @@ NODE_ARGS=()
 
 case "${1:-}" in
   start)
-    # After building, daemonize.
     DAEMON=1; shift ;;
   stop)
+    # stop doesn't need build; load env for PID_FILE path consistency
+    if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; fi
     _daemon_stop; exit 0 ;;
   restart)
-    _daemon_stop; sleep 1; set -- start ;;
+    if [[ -f "$ROOT/.env" ]]; then set -a; source "$ROOT/.env"; set +a; fi
+    _daemon_stop; sleep 1
+    DAEMON=1; shift || true ;;
   logs)
     tail -f "$LOG_FILE"; exit 0 ;;
   status)
@@ -251,6 +253,11 @@ build_web() {
   h="$(cd "$ROOT" && src_hash web/src web/index.html web/package.json web/vite.config.ts web/tailwind.config.js)"
   if [[ $REBUILD == 0 && -f "$ROOT/web/dist/index.html" && -f "$stamp" && "$(cat "$stamp")" == "$h" ]]; then
     log "web UI is up to date"; return
+  fi
+  # No web source (release package) and dist stamp exists — skip.
+  if [[ $REBUILD == 0 && -f "$stamp" ]] && \
+     ! find "$ROOT/web" -maxdepth 2 -name '*.ts' -o -name '*.tsx' 2>/dev/null | grep -q .; then
+    log "no web source found; using pre-built UI"; return
   fi
   if (cd "$ROOT/web" && [[ -d node_modules ]] && npm ls --depth=0 >/dev/null 2>&1); then
     log "web dependencies already installed"
