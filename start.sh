@@ -317,6 +317,8 @@ fi
 if [[ $ROLE == node ]]; then
   export AGENTHOST_DATA="${AGENTHOST_DATA:-$ROOT/node-data}"
   export AGENTHOST_WORKSPACE="${AGENTHOST_WORKSPACE:-$ROOT/workspace}"
+  # devcontainer: no sandbox needed, Codex can do anything inside the container
+  export AGENTHOST_SANDBOX="${AGENTHOST_SANDBOX:-danger-full-access}"
   mkdir -p "$AGENTHOST_DATA" "$AGENTHOST_WORKSPACE"
   log "starting AgentHost node (connects out to ${AGENTHOST_HUB:-the --hub address})"
   exec "$ROOT/bin/agenthost" node "${NODE_ARGS[@]}"
