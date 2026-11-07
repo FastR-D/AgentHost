@@ -2,11 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowLeft, ClipboardList, Loader2, Play, Plus, Save, Trash2, X } from "lucide-react";
 import { api } from "../api";
-import { guard, navigate, setCurrentNode, toast, useCurrentNode, useStore } from "../store";
+import { guard, navigate, setCurrentNode, toast, useCurrentNode } from "../store";
 import type { Task } from "../types";
 import { fmtRelative } from "../lib/format";
 import { WhereChip } from "./DirPicker";
-import { RepoSkills, invalidateTasks, taskWhere, tasksFor } from "./TaskSheet";
+import { invalidateTasks, taskWhere, tasksFor } from "./TaskSheet";
 import { ParallelChip, isMultiParallel, parallelLabel, PARALLEL_UNLIMITED } from "./Parallel";
 
 const EMPTY: Task = { name: "", title: "", node: "", cwd: "", parallel: 0, body: "", updatedAt: "" };
@@ -22,7 +22,6 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
   const current = useCurrentNode();
   // New tasks belong to the current server; the examples work on any server.
   const node = isNew ? current : t.node || current;
-  const workspace = useStore((s) => s.nodes.find((n) => n.id === node)?.workspace);
   const dirty = t.title !== orig.title || t.body !== orig.body || (t.node ?? "") !== (orig.node ?? "") || (t.cwd ?? "") !== (orig.cwd ?? "") || (t.parallel ?? 0) !== (orig.parallel ?? 0);
 
   useEffect(() => {
@@ -79,24 +78,6 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
     if (res) navigate({ page: "session", id: res.session.id });
   };
 
-  // "$name" in the text asks Codex to use that skill.
-  const insertSkill = (skill: string) => {
-    const el = body.current;
-    const token = `$${skill}`;
-    const at = el ? el.selectionStart : t.body.length;
-    const before = t.body.slice(0, at);
-    const after = t.body.slice(el ? el.selectionEnd : at);
-    const pad = before && !/\s$/.test(before) ? " " : "";
-    const next = `${before}${pad}${token} ${after}`;
-    setT({ ...t, body: next });
-    requestAnimationFrame(() => {
-      if (!el) return;
-      const pos = before.length + pad.length + token.length + 1;
-      el.focus();
-      el.setSelectionRange(pos, pos);
-    });
-  };
-
   if (loading)
     return (
       <div className="flex h-full items-center justify-center text-faint">
@@ -124,7 +105,7 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
             </button>
           )}
         </div>
-        <span className="mt-1 block text-[11.5px] text-faint">一般选代码所在的目录，Codex 会在那里干活，也会用上那份代码里的技能。</span>
+        <span className="mt-1 block text-[11.5px] text-faint">一般选代码所在的目录，Codex 会在那里干活。</span>
       </div>
 
       <div>
@@ -144,19 +125,6 @@ function Editor({ name, onSaved, onDeleted }: { name: string; onSaved: (t: Task)
           placeholder={"用大白话写清楚要做什么、要注意什么、最后交付什么。比如：\n\n拉一下最新代码，跑测试，测试通过就部署到测试环境，最后告诉我部署了哪个版本。"}
         />
       </label>
-
-      <div className="rounded-xl border border-line bg-panel p-3">
-        <div className="mb-1.5 text-[13px] font-medium">这份代码里的技能</div>
-        <div className="mb-2 text-[11.5px] leading-relaxed text-faint">
-          运行时 AgentHost 会把这些技能交给这一次的 Codex，不会装到全局。Codex 觉得合适就会用；点一下插入 <code>$名字</code>，就是要求一定用它。
-        </div>
-        <RepoSkills
-          node={node}
-          path={t.cwd || workspace}
-          onPick={insertSkill}
-          empty={<div className="text-[12px] text-faint">选好目录后，这里会列出那份代码里的技能。</div>}
-        />
-      </div>
 
       <div className="fixed inset-x-0 bottom-0 z-20 flex gap-2 border-t border-line bg-bg/95 px-4 py-3 pb-safe backdrop-blur md:static md:border-0 md:bg-transparent md:p-0">
         {!isNew && (
@@ -196,7 +164,7 @@ export function TaskLibView({ name }: { name?: string }) {
           </button>
         </div>
         <p className="px-4 pb-2 text-[12px] leading-relaxed text-faint">
-          这台服务器上常做的事，写成一段话存起来，可以指定在哪个目录运行。代码里带的技能会在运行时自动交给 Codex。
+          这台服务器上常做的事，用 Markdown 写清楚怎么做，存起来，可以指定在哪个目录运行。运行时原样交给 Codex 照着做。
         </p>
         <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
           {list === null && <div className="p-3 text-[13px] text-faint">加载中…</div>}

@@ -8,7 +8,7 @@ import (
 // While a task runs, messages go to the manager: it reports progress and
 // passes instructions to the working Codex without disturbing it otherwise.
 func TestManager(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	s, _ := e.CreateSession("", "", "")
 	raw, err := e.StartChat(ChatRequest{SessionID: s.ID, Text: "SLOW STEERABLE 长任务"})
 	if err != nil {
@@ -22,7 +22,7 @@ func TestManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := waitDone(t, e, runIDOf(t, raw))
-	if m.Kind != KindManager || m.Target != worker || m.Sandbox != "read-only" || m.Output != "MGR 进度怎么样 → 任务执行中 | inPrompt=true" {
+	if m.Kind != KindManager || m.Target != worker || m.Sandbox != CodexSandbox || m.Output != "MGR 进度怎么样 → 任务执行中 | inPrompt=true" {
 		t.Fatalf("manager: kind=%s target=%s out=%q", m.Kind, m.Target, m.Output)
 	}
 	if st := e.snapshot(worker).Status; st != StatusRunning {

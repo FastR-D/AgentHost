@@ -1,5 +1,6 @@
-// Package engine schedules chat turns and Markdown workflows on top of the
-// Codex CLI, records everything that happens, and broadcasts live updates.
+// Package engine runs tasks on the Codex CLI — a message or a task's Markdown
+// handed to Codex as is — records everything that happens, and broadcasts
+// live updates.
 package engine
 
 import (
@@ -17,8 +18,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"agenthost/internal/workflow"
 )
 
 type Config struct {
@@ -28,12 +27,9 @@ type Config struct {
 	CodexBin          string         // codex executable on the local node
 	CodexArgs         []string       // extra args before "app-server" (e.g. -c key=value)
 	DefaultModel      string
-	DefaultSandbox    string // read-only | workspace-write | danger-full-access
-	ApprovalPolicy    string // never | on-request | untrusted
 	ApprovalDecision  string // what to answer when codex asks for approval: accept | decline
 	ReasoningSummary  string // auto | concise | detailed | none | "" (codex default)
 	MaxConcurrentRuns int
-	MaxDepth          int      // nesting limit for sub-workflows
 	Tasks             *TaskLib // saved task descriptions
 }
 
@@ -45,7 +41,6 @@ var (
 
 type Engine struct {
 	cfg Config
-	lib *Library
 	hub *Hub
 	st  *store
 
@@ -66,10 +61,8 @@ type runCtl struct {
 	cancel  context.CancelFunc
 	wake    chan struct{}
 	done    chan struct{}
-	steps   map[string]*stepCtl
+	step    *stepCtl // the running Codex; nil before it starts and after it ends
 	paused  bool
-	depth   int
-	topLvl  bool
 	stopped bool
 }
 
@@ -81,24 +74,15 @@ type stepCtl struct {
 	resumeCh chan struct{}
 }
 
-func New(cfg Config, lib *Library) (*Engine, error) {
+func New(cfg Config) (*Engine, error) {
 	if cfg.CodexBin == "" {
 		cfg.CodexBin = "codex"
-	}
-	if cfg.DefaultSandbox == "" {
-		cfg.DefaultSandbox = "workspace-write"
-	}
-	if cfg.ApprovalPolicy == "" {
-		cfg.ApprovalPolicy = "never"
 	}
 	if cfg.ApprovalDecision == "" {
 		cfg.ApprovalDecision = "decline"
 	}
 	if cfg.MaxConcurrentRuns <= 0 {
 		cfg.MaxConcurrentRuns = 4
-	}
-	if cfg.MaxDepth <= 0 {
-		cfg.MaxDepth = 5
 	}
 	if cfg.Workspace != "" {
 		if err := os.MkdirAll(cfg.Workspace, 0o755); err != nil {
@@ -114,7 +98,6 @@ func New(cfg Config, lib *Library) (*Engine, error) {
 	}
 	e := &Engine{
 		cfg:           cfg,
-		lib:           lib,
 		hub:           NewHub(),
 		st:            st,
 		sessions:      map[string]*Session{},
@@ -127,7 +110,7 @@ func New(cfg Config, lib *Library) (*Engine, error) {
 		tasks:         cfg.Tasks,
 	}
 	if e.tasks == nil {
-		lib, err := OpenTaskLib(filepath.Join(cfg.DataDir, "tasks"), nil, LegacyDirs{})
+		lib, err := OpenTaskLib(filepath.Join(cfg.DataDir, "tasks"), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -141,10 +124,9 @@ func New(cfg Config, lib *Library) (*Engine, error) {
 	return e, nil
 }
 
-func (e *Engine) Hub() *Hub         { return e.hub }
-func (e *Engine) Config() Config    { return e.cfg }
-func (e *Engine) Library() *Library { return e.lib }
-func (e *Engine) Tasks() *TaskLib   { return e.tasks }
+func (e *Engine) Hub() *Hub       { return e.hub }
+func (e *Engine) Config() Config  { return e.cfg }
+func (e *Engine) Tasks() *TaskLib { return e.tasks }
 
 func newID(prefix string) string {
 	b := make([]byte, 6)
@@ -264,8 +246,6 @@ func (e *Engine) Flush() {
 
 func (e *Engine) summary(r *Run) *RunSummary {
 	s := &RunSummary{Run: *r}
-	s.Source = ""
-	s.Workflow = nil
 	s.Steps = make([]*StepSummary, len(r.Steps))
 	for i, st := range r.Steps {
 		s.Steps[i] = &StepSummary{Step: *st, ItemCount: len(st.Items)}
@@ -606,17 +586,6 @@ type ChatRequest struct {
 	Sandbox   string `json:"sandbox"`
 }
 
-type WorkflowRequest struct {
-	SessionID string            `json:"sessionId"`
-	Name      string            `json:"name"`   // workflow file in the library
-	Source    string            `json:"source"` // or inline markdown
-	Cwd       string            `json:"cwd"`
-	Vars      map[string]string `json:"vars"`
-	Model     string            `json:"model"`
-	Sandbox   string            `json:"sandbox"`
-	Mode      string            `json:"mode"` // "" (auto) | steps | agent
-}
-
 // sessionBusy reports whether a task is running in the session (manager
 // replies do not count).
 func (e *Engine) sessionBusy(s *Session) bool {
@@ -645,7 +614,7 @@ func (e *Engine) StartChat(req ChatRequest) (json.RawMessage, error) {
 		}
 		e.mu.Unlock()
 	}
-	return e.startChat(req, "", false)
+	return e.startChat(req, "")
 }
 
 // taskSpec is what a task contributes to a run.
@@ -705,9 +674,8 @@ func taskPrompt(body, note string) string {
 	return body + "\n\n---\n\n补充说明：" + note
 }
 
-// startChat starts a chat run; title overrides the one taken from the text,
-// network lets this run's agent commands use the network.
-func (e *Engine) startChat(req ChatRequest, title string, network bool, writable ...string) (json.RawMessage, error) {
+// startChat starts a run; title overrides the one taken from the text.
+func (e *Engine) startChat(req ChatRequest, title string) (json.RawMessage, error) {
 	note := strings.TrimSpace(req.Text)
 	text := note
 	ts, err := e.resolveTask(req)
@@ -737,8 +705,8 @@ func (e *Engine) startChat(req ChatRequest, title string, network bool, writable
 	}
 	r := &Run{
 		ID: newID("r"), SessionID: s.ID, Kind: KindChat, Title: truncate(firstLine(text), 80), Prompt: text,
-		Cwd: s.Cwd, NodeID: s.NodeID, Model: firstNonEmpty(req.Model, e.defaultModel()), Sandbox: firstNonEmpty(req.Sandbox, e.cfg.DefaultSandbox),
-		Status: StatusQueued, CreatedAt: time.Now(), Network: network, WritableRoots: writable,
+		Cwd: s.Cwd, NodeID: s.NodeID, Model: firstNonEmpty(req.Model, e.defaultModel()), Sandbox: CodexSandbox,
+		Status: StatusQueued, CreatedAt: time.Now(),
 	}
 	if ts != nil {
 		r.Task, r.TaskFile, r.TaskTitle, r.Note = ts.name, ts.file, ts.title, note
@@ -760,105 +728,26 @@ func (e *Engine) startChat(req ChatRequest, title string, network bool, writable
 	if title != "" {
 		r.Title = title
 	}
-	r.Steps = []*Step{{
-		ID: "codex", Title: "Codex", Type: workflow.TypeAgent, DependsOn: []string{}, If: workflow.IfSuccess,
-		Status: StatusPending, MaxAttempts: 1, Cwd: s.Cwd, Prompt: text, Items: []*Item{},
-	}}
+	r.Steps = codexStep("codex", "Codex", s.Cwd, text)
 	if len(s.RunIDs) == 0 && (s.Title == "" || s.Title == "新会话") {
 		s.Title = truncate(firstLine(r.Title), 60)
 	}
-	return e.launch(s, r, nil, 0)
-}
-
-func (e *Engine) StartWorkflow(req WorkflowRequest) (json.RawMessage, error) {
-	source, file := req.Source, ""
-	if strings.TrimSpace(source) == "" {
-		if req.Name == "" {
-			return nil, errors.New("需要提供 workflow 名称或 Markdown 内容")
-		}
-		src, err := e.lib.Read(req.Name)
-		if err != nil {
-			return nil, err
-		}
-		source, file = src, req.Name
-	}
-	wf, err := workflow.ParseMode(source, strings.TrimSuffix(file, ".md"), req.Mode)
-	if err != nil {
-		return nil, fmt.Errorf("workflow 解析失败: %w", err)
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	s := e.sessions[req.SessionID]
-	if s == nil {
-		return nil, ErrNotFound
-	}
-	if e.sessionBusy(s) {
-		return nil, ErrBusy
-	}
-	base := s.Cwd
-	cwd := e.resolveDir(base, wf.Cwd)
-	if strings.TrimSpace(req.Cwd) != "" {
-		nd, err := e.node(s.NodeID)
-		if err != nil {
-			return nil, err
-		}
-		cwd = e.resolveDir(workspaceOf(nd), req.Cwd)
-	}
-	r := e.newWorkflowRun(s, wf, source, file, cwd, req.Vars, req.Model, req.Sandbox)
-	r.Mode = req.Mode
-	if len(s.RunIDs) == 0 && (s.Title == "" || s.Title == "新会话") {
-		s.Title = "Workflow: " + wf.Name
-	}
-	return e.launch(s, r, nil, 0)
-}
-
-func (e *Engine) newWorkflowRun(s *Session, wf *workflow.Workflow, source, file, cwd string, vars map[string]string, model, sandbox string) *Run {
-	merged := map[string]string{}
-	for k, v := range wf.Vars {
-		merged[k] = v
-	}
-	for k, v := range vars {
-		merged[k] = v
-	}
-	r := &Run{
-		ID: newID("r"), SessionID: s.ID, NodeID: s.NodeID, Kind: KindWorkflow, Title: wf.Name, Source: source, WorkflowFile: file,
-		Workflow: wf, Vars: merged, Cwd: cwd,
-		Model:   firstNonEmpty(model, wf.Model, e.defaultModel()),
-		Sandbox: firstNonEmpty(sandbox, wf.Sandbox, e.cfg.DefaultSandbox),
-		Status:  StatusQueued, CreatedAt: time.Now(), Network: wf.Network,
-	}
-	r.Prompt = fmt.Sprintf("运行 workflow「%s」", wf.Name)
-	if file != "" {
-		r.Prompt += fmt.Sprintf("（%s）", file)
-	}
-	for _, d := range wf.Steps {
-		r.Steps = append(r.Steps, &Step{
-			ID: d.ID, Title: d.Title, Type: d.Type, DependsOn: d.DependsOn, If: d.If, ContinueOnError: d.ContinueOnError,
-			Status: StatusPending, MaxAttempts: d.Retry + 1, Cwd: e.resolveDir(cwd, d.Cwd), Workflow: d.Workflow,
-			Prompt: d.Prompt, Run: d.Run, Items: []*Item{}, def: d, Orchestrate: d.Orchestrate,
-		})
-	}
-	return r
+	return e.launch(s, r)
 }
 
 // launch registers a run and starts executing it. Call with e.mu held.
-func (e *Engine) launch(s *Session, r *Run, parentCtx context.Context, depth int) (json.RawMessage, error) {
+func (e *Engine) launch(s *Session, r *Run) (json.RawMessage, error) {
 	// Only a local check here (e.mu is held); the directory is created by execRun.
 	if _, err := e.node(r.NodeID); err != nil {
 		return nil, err
 	}
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
-	ctx, cancel := context.WithCancel(parentCtx)
-	rc := &runCtl{ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), steps: map[string]*stepCtl{}, depth: depth, topLvl: r.ParentRunID == ""}
+	ctx, cancel := context.WithCancel(context.Background())
+	rc := &runCtl{ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	e.runs[r.ID] = r
 	e.ctls[r.ID] = rc
-	if r.ParentRunID == "" {
-		s.RunIDs = append(s.RunIDs, r.ID)
-	}
+	s.RunIDs = append(s.RunIDs, r.ID)
 	e.touchRun(r)
-	e.hub.Publish("run.full", r) // full content (source, workflow) once at creation
+	e.hub.Publish("run.full", r) // full content once at creation
 	e.touchSession(s)
 	go e.execRun(r, rc)
 	return json.Marshal(map[string]any{"session": e.sessionInfo(s), "run": e.summary(r)})
@@ -872,9 +761,6 @@ func (e *Engine) Retry(runID string) (json.RawMessage, error) {
 	if old == nil {
 		return nil, ErrNotFound
 	}
-	if old.ParentRunID != "" {
-		return nil, errors.New("子 workflow 不能单独重新运行，请重新运行父任务")
-	}
 	if old.Kind == KindManager {
 		return nil, errors.New("管家的回答不能重新运行，直接再问一次就行")
 	}
@@ -885,25 +771,13 @@ func (e *Engine) Retry(runID string) (json.RawMessage, error) {
 	if e.sessionBusy(s) {
 		return nil, ErrBusy
 	}
-	var r *Run
-	if old.Kind == KindChat {
-		r = &Run{
-			ID: newID("r"), SessionID: s.ID, Kind: KindChat, Title: old.Title, Prompt: old.Prompt, Cwd: s.Cwd, NodeID: s.NodeID,
-			Model: old.Model, Sandbox: old.Sandbox, Status: StatusQueued, CreatedAt: time.Now(), Network: old.Network,
-			WritableRoots: old.WritableRoots, Task: old.Task, TaskFile: old.TaskFile, TaskTitle: old.TaskTitle, Note: old.Note, Parallel: old.Parallel,
-		}
-		r.Steps = []*Step{{ID: "codex", Title: "Codex", Type: workflow.TypeAgent, DependsOn: []string{}, If: workflow.IfSuccess,
-			Status: StatusPending, MaxAttempts: 1, Cwd: s.Cwd, Prompt: old.Prompt, Items: []*Item{}}}
-	} else {
-		wf, err := workflow.ParseMode(old.Source, strings.TrimSuffix(old.WorkflowFile, ".md"), old.Mode)
-		if err != nil {
-			return nil, err
-		}
-		r = e.newWorkflowRun(s, wf, old.Source, old.WorkflowFile, old.Cwd, old.Vars, old.Model, old.Sandbox)
-		r.Mode = old.Mode
+	r := &Run{
+		ID: newID("r"), SessionID: s.ID, Kind: KindChat, Title: old.Title, Prompt: old.Prompt, Cwd: s.Cwd, NodeID: s.NodeID,
+		Model: old.Model, Sandbox: CodexSandbox, Status: StatusQueued, CreatedAt: time.Now(),
+		Task: old.Task, TaskFile: old.TaskFile, TaskTitle: old.TaskTitle, Note: old.Note, Parallel: old.Parallel, RetryOf: old.ID,
 	}
-	r.RetryOf = old.ID
-	return e.launch(s, r, nil, 0)
+	r.Steps = codexStep("codex", "Codex", s.Cwd, old.Prompt)
+	return e.launch(s, r)
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -935,18 +809,16 @@ func (e *Engine) Pause(runID string) error {
 	rc.paused = true
 	r.Status = StatusPaused
 	r.Activity = "已暂停"
-	var fns []func()
-	for _, st := range r.Steps {
-		if c := rc.steps[st.ID]; c != nil && c.pause != nil && st.Status == StatusRunning {
-			fns = append(fns, c.pause)
-		}
+	var pause func()
+	if c := rc.step; c != nil && r.Steps[0].Status == StatusRunning {
+		pause = c.pause
 	}
 	e.touchRun(r)
 	e.touchSession(e.sessions[r.SessionID])
 	e.mu.Unlock()
 	e.logf(runID, "", "host", "info", "用户暂停任务")
-	for _, f := range fns {
-		f()
+	if pause != nil {
+		pause()
 	}
 	return nil
 }
@@ -969,18 +841,16 @@ func (e *Engine) Resume(runID string) error {
 		r.Status = StatusRunning
 	}
 	r.Activity = ""
-	var fns []func()
-	for _, st := range r.Steps {
-		if c := rc.steps[st.ID]; c != nil && c.resume != nil && (st.Status == StatusPaused || st.Status == StatusRunning) {
-			fns = append(fns, c.resume)
-		}
+	var resume func()
+	if c := rc.step; c != nil {
+		resume = c.resume
 	}
 	e.touchRun(r)
 	e.touchSession(e.sessions[r.SessionID])
 	e.mu.Unlock()
 	e.logf(runID, "", "host", "info", "用户继续任务")
-	for _, f := range fns {
-		f()
+	if resume != nil {
+		resume()
 	}
 	e.wake(rc)
 	return nil

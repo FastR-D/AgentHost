@@ -20,6 +20,5 @@ services:
       AGENTHOST_HUB: https://agenthost.example.com   # 公网 Web 控制台地址
       AGENTHOST_NODE_TOKEN: change-me                # 控制台「服务器」页给节点发的令牌
       AGENTHOST_NODE_NAME: "dev-1"                   # 显示在服务器列表里的名字
-      AGENTHOST_SANDBOX: danger-full-access   # devcontainer，容器内随便改，不需要沙箱
     # 不映射端口，不挂载宿主目录：容器即开发环境，数据全在容器内
     restart: unless-stopped

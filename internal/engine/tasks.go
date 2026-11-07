@@ -1,11 +1,9 @@
 package engine
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -44,17 +42,8 @@ type TaskLib struct {
 	dir string
 }
 
-// LegacyDirs are the libraries of earlier AgentHost versions; the user's
-// own files there become tasks the first time the task library is opened.
-type LegacyDirs struct {
-	Workflows string // Markdown workflows
-	Skills    string // the old "技能库" (<name>/SKILL.md)
-}
-
-// OpenTaskLib opens dir. The first time, it installs the example tasks from
-// seed and brings over the user's files from the legacy libraries (which are
-// left in place).
-func OpenTaskLib(dir string, seed fs.FS, legacy LegacyDirs) (*TaskLib, error) {
+// OpenTaskLib opens dir. The first time, it installs the example tasks from seed.
+func OpenTaskLib(dir string, seed fs.FS) (*TaskLib, error) {
 	_, err := os.Stat(dir)
 	fresh := os.IsNotExist(err)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -72,9 +61,6 @@ func OpenTaskLib(dir string, seed fs.FS, legacy LegacyDirs) (*TaskLib, error) {
 					_ = os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644)
 				}
 			}
-		}
-		if n := l.migrate(legacy); n > 0 {
-			slog.Info("moved earlier workflows / skills into the task library", "count", n, "dir", dir)
 		}
 	}
 	return l, nil
@@ -295,130 +281,4 @@ func (l *TaskLib) Delete(name string) error {
 		return ErrNotFound
 	}
 	return err
-}
-
-// ---------------------------------------------------------------- migration
-
-// Example skills shipped by the previous version; these are not migrated
-// (the example tasks replace them).
-var oldSkillExamples = map[string]string{
-	"code-review":     "cdc9ec1b8fb6d6b60e9d4d7ad82afcd9381cc7587fc31fa10778f48fb8c9ed93",
-	"project-checkup": "b7d6d7bb0d6cbd2b1dc8514debe806eb749258c9c0312529ee16e1ad2007b821",
-	"server-check":    "4f9bfc89435caf1ec67d9262ad64374a03583d6650848c0db544bb44134ac7b0",
-}
-
-func (l *TaskLib) migrate(old LegacyDirs) int {
-	n := 0
-	add := func(t Task, mod time.Time) {
-		if strings.TrimSpace(t.Body) == "" {
-			return
-		}
-		l.mu.Lock()
-		t.Name = l.uniqueName(taskSlug(t.Name))
-		p := filepath.Join(l.dir, t.Name+".md")
-		err := os.WriteFile(p, renderTask(t), 0o644)
-		l.mu.Unlock()
-		if err == nil {
-			_ = os.Chtimes(p, mod, mod)
-			n++
-		}
-	}
-	if old.Workflows != "" {
-		manifest := map[string]string{}
-		if b, err := os.ReadFile(filepath.Join(old.Workflows, exampleManifest)); err == nil {
-			_ = json.Unmarshal(b, &manifest)
-		}
-		entries, _ := os.ReadDir(old.Workflows)
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() || strings.HasPrefix(name, ".") || !strings.HasSuffix(strings.ToLower(name), ".md") {
-				continue
-			}
-			b, err := os.ReadFile(filepath.Join(old.Workflows, name))
-			if err != nil {
-				continue
-			}
-			h := sha(b)
-			if manifest[name] == h || legacyExamples[name] == h {
-				continue // an untouched example
-			}
-			var mod time.Time
-			if fi, err := e.Info(); err == nil {
-				mod = fi.ModTime()
-			}
-			add(taskFromWorkflow(name, b), mod)
-		}
-	}
-	if old.Skills != "" {
-		entries, _ := os.ReadDir(old.Skills)
-		for _, e := range entries {
-			if !e.IsDir() {
-				continue
-			}
-			p := filepath.Join(old.Skills, e.Name(), "SKILL.md")
-			b, err := os.ReadFile(p)
-			if err != nil || oldSkillExamples[e.Name()] == sha(b) {
-				continue
-			}
-			var mod time.Time
-			if fi, err := os.Stat(p); err == nil {
-				mod = fi.ModTime()
-			}
-			add(taskFromOldSkill(e.Name(), b), mod)
-		}
-	}
-	return n
-}
-
-// taskFromWorkflow keeps a workflow's text; its name and directory become the
-// task's, and variables are written out so the text still makes sense.
-func taskFromWorkflow(file string, b []byte) Task {
-	t := Task{Name: strings.TrimSuffix(file, filepath.Ext(file))}
-	text := strings.ReplaceAll(string(b), "\r\n", "\n")
-	var vars []string
-	if fm, body, ok := splitFrontmatter(text); ok {
-		var f struct {
-			Name string         `yaml:"name"`
-			Cwd  string         `yaml:"cwd"`
-			Vars map[string]any `yaml:"vars"`
-		}
-		if yaml.Unmarshal([]byte(fm), &f) == nil {
-			t.Title, t.Cwd, text = strings.TrimSpace(f.Name), strings.TrimSpace(f.Cwd), body
-			for k, v := range f.Vars {
-				vars = append(vars, fmt.Sprintf("- %s = %v", k, v))
-			}
-		}
-	}
-	sort.Strings(vars)
-	t.Body = strings.TrimSpace(text)
-	if len(vars) > 0 {
-		t.Body += "\n\n变量（文中的 {{vars.名字}} 指这些值）：\n" + strings.Join(vars, "\n")
-	}
-	if t.Title == "" {
-		t.Title = firstHeading(t.Body)
-	}
-	if t.Title == "" {
-		t.Title = t.Name
-	}
-	return t
-}
-
-func taskFromOldSkill(name string, b []byte) Task {
-	t := Task{Name: name, Title: name}
-	text := strings.ReplaceAll(string(b), "\r\n", "\n")
-	if fm, body, ok := splitFrontmatter(text); ok {
-		var f struct {
-			Metadata struct {
-				ShortDescription string `yaml:"short-description"`
-			} `yaml:"metadata"`
-		}
-		if yaml.Unmarshal([]byte(fm), &f) == nil {
-			if s := strings.TrimSpace(f.Metadata.ShortDescription); s != "" {
-				t.Title = s
-			}
-			text = body
-		}
-	}
-	t.Body = strings.TrimSpace(text)
-	return t
 }

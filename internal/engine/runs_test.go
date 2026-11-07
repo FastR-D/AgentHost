@@ -18,7 +18,7 @@ func listRuns(t *testing.T, e *Engine, f RunFilter) []RunSummary {
 }
 
 func TestRunRecords(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	a, _ := e.CreateSession("", "a", "")
 	b, _ := e.CreateSession("", "b", "")
 	var ids []string

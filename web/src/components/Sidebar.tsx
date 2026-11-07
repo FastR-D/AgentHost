@@ -25,7 +25,7 @@ export function Sidebar({ route, className }: { route: Route; className?: string
     [sessions, current],
   );
   const activeCount = useMemo(
-    () => Object.values(runs).filter((r) => isActive(r.status) && !r.parentRunId && r.kind !== "manager" && r.nodeId === current).length,
+    () => Object.values(runs).filter((r) => isActive(r.status) && r.kind !== "manager" && r.nodeId === current).length,
     [runs, current],
   );
 

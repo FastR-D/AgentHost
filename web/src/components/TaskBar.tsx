@@ -1,17 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import clsx from "clsx";
-import { Bot, ChevronRight, ListTree, Loader2, Pause, Play, RotateCcw, Square, Users } from "lucide-react";
+import { Bot, ChevronRight, Loader2, Pause, Play, Square, Users } from "lucide-react";
 import type { Item, Run, Step, SubAgent } from "../types";
 import { isActive } from "../types";
-import { closeProcess, control, openProcess, useStore } from "../store";
-import { Elapsed, StatusBadge, StatusIcon, between, fmtDuration, fmtTokens, statusLabel } from "../lib/format";
+import { control } from "../store";
+import { Elapsed, StatusIcon, between, fmtDuration, fmtTokens } from "../lib/format";
 import { ItemView } from "./ItemView";
-import { Sheet } from "./DirPicker";
+import { finalItem } from "./messages";
 import { isMultiParallel, parallelLabel } from "./Parallel";
-import { ProgressBar, RunControls, StepCard, progressUnits, useRun } from "./StepCard";
+import { ProgressBar, RunControls, progressUnits } from "./RunControls";
 
 /** Tokens of a run, sub-agents included. */
-export const runTokens = (run: Run) =>
+const runTokens = (run: Run) =>
   run.steps.reduce((n, s) => n + (s.usage?.total?.totalTokens ?? 0) + (s.agents ?? []).reduce((m, a) => m + (a.tokens ?? 0), 0), 0);
 
 const agentsOf = (run: Run) => run.steps.flatMap((s) => s.agents ?? []);
@@ -40,126 +40,40 @@ function nowText(run: Run) {
   return run.activity || "执行中…";
 }
 
-/** The session's task at a glance, pinned under the header: state, progress, controls. */
-export function TaskBar({ run }: { run: Run }) {
-  const active = isActive(run.status);
-  const steps = progressUnits(run).length > 1;
+/** Pause / resume / stop, as small icon buttons next to the process line. */
+function LiveControls({ run }: { run: Run }) {
   const [busy, setBusy] = useState<string | null>(null);
-  const tokens = runTokens(run);
-  const act = async (a: "pause" | "resume" | "stop" | "retry") => {
+  const act = async (a: "pause" | "resume" | "stop") => {
     setBusy(a);
     await control(run.id, a);
     setBusy(null);
   };
   const icon = "h-3.5 w-3.5";
+  const spin = <Loader2 className={clsx(icon, "animate-spin")} />;
   return (
-    <div className={clsx("border-b border-line px-3 py-2 md:px-4", active ? "bg-info/5" : "bg-panel")}>
-      <div className="flex items-center gap-2">
-        <button className="flex min-w-0 flex-1 items-center gap-2 text-left" onClick={() => openProcess(run.id)} title="查看执行过程">
-          {run.status === "running" ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
-          ) : run.status === "paused" ? (
-            <Pause className="h-4 w-4 shrink-0 text-warn" />
-          ) : (
-            <StatusIcon status={run.status} className="h-4 w-4 shrink-0" />
-          )}
-          <span className="min-w-0 flex-1">
-            <span className={clsx("block truncate text-[13px]", run.status === "running" ? "shimmer-text font-medium" : "text-fg")}>
-              {active ? nowText(run) : statusLabel[run.status]}
-            </span>
-            <span className="block truncate text-[11px] text-faint">
-              {active ? (
-                <>
-                  后台执行中 · <Elapsed start={run.startedAt ?? run.createdAt} running />
-                  {isMultiParallel(run.parallel) && <> · {parallelLabel(run.parallel)}</>}
-                </>
-              ) : (
-                [summary(run), tokens ? `${fmtTokens(tokens)} tokens` : ""].filter(Boolean).join(" · ")
-              )}
-            </span>
-          </span>
-          <ChevronRight className="h-4 w-4 shrink-0 text-faint" />
+    <div className="flex shrink-0 items-center">
+      {run.status === "paused" ? (
+        <button className="btn-ghost !p-2" onClick={() => act("resume")} disabled={!!busy} title="继续">
+          {busy === "resume" ? spin : <Play className={icon} />}
         </button>
-        <div className="flex shrink-0 items-center">
-          {active && run.status !== "paused" && (
-            <button className="btn-ghost !p-2" onClick={() => act("pause")} disabled={!!busy} title="暂停">
-              {busy === "pause" ? <Loader2 className={clsx(icon, "animate-spin")} /> : <Pause className={icon} />}
-            </button>
-          )}
-          {run.status === "paused" && (
-            <button className="btn-ghost !p-2" onClick={() => act("resume")} disabled={!!busy} title="继续">
-              {busy === "resume" ? <Loader2 className={clsx(icon, "animate-spin")} /> : <Play className={icon} />}
-            </button>
-          )}
-          {active && (
-            <button className="btn-ghost !p-2 hover:!text-bad" onClick={() => act("stop")} disabled={!!busy} title="停止">
-              {busy === "stop" ? <Loader2 className={clsx(icon, "animate-spin")} /> : <Square className={icon} />}
-            </button>
-          )}
-          {!active && run.kind !== "manager" && (
-            <button className="btn-ghost !p-2" onClick={() => act("retry")} disabled={!!busy} title="用相同的要求重新运行">
-              <RotateCcw className={icon} />
-            </button>
-          )}
-        </div>
-      </div>
-      {steps && (
-        <div className="mt-1.5">
-          <ProgressBar run={run} />
-        </div>
+      ) : (
+        <button className="btn-ghost !p-2" onClick={() => act("pause")} disabled={!!busy} title="暂停">
+          {busy === "pause" ? spin : <Pause className={icon} />}
+        </button>
       )}
+      <button className="btn-ghost !p-2 hover:!text-bad" onClick={() => act("stop")} disabled={!!busy} title="停止">
+        {busy === "stop" ? spin : <Square className={icon} />}
+      </button>
     </div>
   );
 }
 
-/** Everything a task did: commands, outputs, thinking, file changes. */
-export function ProcessSheet() {
-  const runId = useStore((s) => s.processRun);
-  const run = useRun(runId ?? "");
-  const end = useRef<HTMLDivElement>(null);
-  const active = run && isActive(run.status);
-  const count = run?.steps.reduce((n, s) => n + (s.items?.length ?? 0), 0) ?? 0;
-  // A running task opens at its latest step.
-  useEffect(() => {
-    if (active) end.current?.scrollIntoView({ block: "end" });
-  }, [runId, active ? count : 0]);
-  if (!run) return null;
-  const st = run.steps[0];
-  return (
-    <Sheet
-      wide
-      title={
-        <span className="flex min-w-0 items-center gap-2">
-          <ListTree className="h-4 w-4 shrink-0 text-info" />
-          <span className="truncate">执行过程</span>
-          <StatusBadge status={run.status} />
-        </span>
-      }
-      onClose={closeProcess}
-      footer={<RunControls run={run} />}
-    >
-      <div className="space-y-2 px-3 py-3 text-[14px] leading-relaxed md:px-4">
-        {run.kind === "workflow" ? (
-          run.steps.map((s) => <StepCard key={s.id} run={run} step={s} />)
-        ) : (st?.items ?? []).length === 0 ? (
-          <div className="py-6 text-center text-[13px] text-faint">{active ? "正在启动…" : "没有执行记录"}</div>
-        ) : (
-          <Timeline step={st} />
-        )}
-        {active && (
-          <div className="flex items-center gap-2 pt-1 text-[12.5px] text-info">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> {nowText(run)}
-          </div>
-        )}
-        <div ref={end} />
-      </div>
-    </Sheet>
-  );
-}
+/** Which process lines are open; survives the conversation being rebuilt. */
+const openRuns = new Set<string>();
 
 /** A step's timeline with each sub-Codex folded into one card where it started. */
-function Timeline({ step }: { step: Step }) {
-  const items = step.items ?? [];
+function Timeline({ step, hide }: { step: Step; hide?: string }) {
+  const items = (step.items ?? []).filter((it) => it.id !== hide);
   const agents = step.agents ?? [];
   const known = new Set(agents.map((a) => a.threadId));
   const placed = new Set<string>();
@@ -228,33 +142,72 @@ function SubAgentCard({ agent, items }: { agent: SubAgent; items: Item[] }) {
   );
 }
 
-/** In the conversation: one line standing for a task's execution. */
+/** In the conversation: a task's execution — state, progress and controls on
+ *  one line; tap it to unfold everything it did right here. */
 export function ProcessLine({ run }: { run: Run }) {
   const active = isActive(run.status);
+  const [open, setOpen] = useState(() => openRuns.has(run.id));
+  const toggle = () => {
+    if (open) openRuns.delete(run.id);
+    else openRuns.add(run.id);
+    setOpen(!open);
+  };
+  const tokens = runTokens(run);
+  const st = run.steps[0];
+  const sub = active
+    ? [
+        run.status === "paused" ? "已暂停" : "执行中",
+        isMultiParallel(run.parallel) ? parallelLabel(run.parallel) : "",
+      ]
+    : [summary(run), tokens ? `${fmtTokens(tokens)} tokens` : ""];
   return (
-    <button
-      onClick={() => openProcess(run.id)}
-      className="my-1 flex w-full max-w-full items-center gap-2 rounded-lg border border-line bg-panel px-3 py-1.5 text-left text-[12.5px] text-muted hover:border-faint"
-    >
-      {active ? (
-        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" />
-      ) : (
-        <StatusIcon status={run.status} className="h-3.5 w-3.5 shrink-0" />
+    <div className={clsx("my-1 w-full max-w-full rounded-lg border", active ? "border-info/40 bg-info/5" : "border-line bg-panel")}>
+      <div className="flex items-center gap-1 pr-1">
+        <button onClick={toggle} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left text-[12.5px]" title={open ? "收起执行过程" : "展开执行过程"}>
+          {run.status === "running" ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-info" />
+          ) : run.status === "paused" ? (
+            <Pause className="h-3.5 w-3.5 shrink-0 text-warn" />
+          ) : (
+            <StatusIcon status={run.status} className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className={clsx("block truncate", run.status === "running" ? "shimmer-text font-medium" : "text-fg")}>
+              {active ? nowText(run) : "执行过程"}
+            </span>
+            <span className="block truncate text-[11px] text-faint">
+              {sub.filter(Boolean).join(" · ")}
+              {active && (
+                <>
+                  {" · "}
+                  <Elapsed start={run.startedAt ?? run.createdAt} running />
+                </>
+              )}
+            </span>
+          </span>
+          <ChevronRight className={clsx("h-3.5 w-3.5 shrink-0 text-faint transition-transform", open && "rotate-90")} />
+        </button>
+        {active && <LiveControls run={run} />}
+      </div>
+      {active && progressUnits(run).length > 1 && (
+        <div className="px-3 pb-2">
+          <ProgressBar run={run} />
+        </div>
       )}
-      <span className="min-w-0 flex-1 truncate">
-        {active ? (
-          <>
-            <span className="text-fg">后台执行中</span> · {nowText(run)}
-          </>
-        ) : (
-          <>
-            <span className="text-fg">执行过程</span>
-            {summary(run) && <> · {summary(run)}</>}
-          </>
-        )}
-      </span>
-      <ChevronRight className="h-3.5 w-3.5 shrink-0 text-faint" />
-    </button>
+      {open && (
+        <div className="space-y-2 border-t border-line px-3 py-2 text-[14px] leading-relaxed">
+          {(st?.items ?? []).length === 0 ? (
+            <div className="py-3 text-center text-[13px] text-faint">{active ? "正在启动…" : "没有执行记录"}</div>
+          ) : (
+            // The final answer is shown right below in the conversation.
+            <Timeline step={st} hide={active ? undefined : finalItem(run)?.id} />
+          )}
+          <div className="border-t border-line pt-2">
+            <RunControls run={run} size="xs" />
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -329,9 +282,9 @@ export function ActionChip({ item }: { item: Item }) {
 export function TaskDoneLine({ run }: { run: Run }) {
   const text = run.status === "completed" ? "任务完成" : run.status === "failed" ? "任务失败" : "任务已停止";
   return (
-    <button onClick={() => openProcess(run.id)} className="mb-1 mt-2 flex items-center gap-1.5 text-[12px] font-medium text-muted hover:text-fg">
+    <div className="mb-1 mt-2 flex items-center gap-1.5 text-[12px] font-medium text-muted">
       <StatusIcon status={run.status} className="h-3.5 w-3.5" /> {text}
       {summary(run) && <span className="font-normal text-faint">· {summary(run)}</span>}
-    </button>
+    </div>
   );
 }

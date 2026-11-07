@@ -1,23 +1,23 @@
 # AgentHost
 
-在手机或电脑浏览器里远程指挥 Codex CLI。用大白话描述要做的事，或者运行存好的任务、代码仓库里的某个 `.md`，Codex 自己拆步骤去做，并实时汇报进度。任务在后台执行时可以继续聊天：问“管家”跑到哪了，或者让它转告 Codex 改做法。代码里自带的技能（`SKILL.md`）会在运行时交给这一次的 Codex，不会装到全局。一个 Web 控制台可以管理多台跑任务的服务器，服务器在内网也可以。
+在手机或电脑浏览器里远程指挥 Codex CLI。用大白话描述要做的事，或者运行存好的任务、代码仓库里的某个 `.md`，Codex 自己拆步骤去做，并实时汇报进度。任务就是一份 Markdown：怎么做、用哪些说明文件都写在里面，AgentHost 原样交给 Codex，不做编排。任务在后台执行时可以继续聊天：问“管家”跑到哪了，或者让它转告 Codex 改做法。一个 Web 控制台可以管理多台跑任务的服务器，服务器在内网也可以。
 
 <p align="center">
-  <img src="docs/images/desktop.png" alt="电脑上的会话：顶部是任务条，下面是任务、管家的回答和最终结果" width="860">
+  <img src="docs/images/desktop.png" alt="电脑上的会话：任务、执行过程、管家的回答和最终结果" width="860">
 </p>
 
 ## 效果
 
-下面的截图来自一次真实运行：在示例仓库 `shop-api` 上跑任务库里的“发布前检查”（跑一分钟的测试、审最近的提交、用仓库自带的 `release-notes` 技能写发布说明），测试进行到一半时问管家进度。
+下面的截图来自一次真实运行：在示例仓库 `shop-api` 上跑任务库里的“发布前检查”（跑一分钟的测试、审最近的提交、按仓库里的 `release-notes` 说明写发布说明），测试进行到一半时问管家进度。
 
 <table>
   <tr>
     <td align="center" width="33%"><img src="docs/images/home.png" alt="首页" width="260"><br><b>首页</b><br><sub>描述要做的事，或点一下常用任务</sub></td>
-    <td align="center" width="33%"><img src="docs/images/task.png" alt="任务库" width="260"><br><b>任务库</b><br><sub>一段大白话 + 在哪个目录运行；下面列出这份代码里的技能</sub></td>
+    <td align="center" width="33%"><img src="docs/images/task.png" alt="任务库" width="260"><br><b>任务库</b><br><sub>一段 Markdown + 在哪个目录运行</sub></td>
     <td align="center" width="33%"><img src="docs/images/manager.png" alt="任务进行中问管家" width="260"><br><b>任务在后台跑，问管家</b><br><sub>“测试跑到哪了？”管家看了实时输出后回答，干活的 Codex 不受打扰</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/process.png" alt="执行过程" width="260"><br><b>执行过程</b><br><sub>点顶部任务条展开：命令、输出、退出码、计划、文件改动</sub></td>
+    <td align="center"><img src="docs/images/process.png" alt="执行过程" width="260"><br><b>执行过程</b><br><sub>点对话里的“执行过程”就地展开：命令、输出、退出码、计划、文件改动</sub></td>
     <td align="center"><img src="docs/images/done.png" alt="任务完成" width="260"><br><b>任务完成</b><br><sub>结果接在对话后面；这次还发现提交标题和实际改动不符</sub></td>
     <td align="center"><img src="docs/images/servers.png" alt="切换服务器" width="260"><br><b>切换服务器</b><br><sub>选一台，所有页面就只针对这台</sub></td>
   </tr>
@@ -73,11 +73,11 @@ docker compose logs agenthost     # 查看登录地址和令牌
 ## 使用
 
 - **当前服务器**：侧边栏顶部（手机上点顶栏标题）选一台服务器，之后新任务、任务库、文件、会话和运行记录都只针对这台
-- **新任务**：直接用大白话描述，比如“先跑一下测试，同时看看最近改的代码有没有问题，最后给我一份中文报告”。多步骤的事 Codex 会先列出步骤，再逐步标记完成，顶部任务条实时显示“步骤 2/4：…”和进度
+- **新任务**：直接用大白话描述，比如“先跑一下测试，同时看看最近改的代码有没有问题，最后给我一份中文报告”。多步骤的事 Codex 会先列出步骤，再逐步标记完成，对话里的执行过程实时显示“步骤 2/4：…”和进度
 - **任务库**：把常做的事写成一段大白话（要做什么、注意什么、交付什么），可以指定在哪个目录运行；任务属于创建时的服务器，自带的示例在每台服务器上都能用。之后在首页“常用任务”或输入框旁的“任务”里点一下就能跑，还可以补一句说明。自带三个示例：代码审阅、项目体检、服务器晨检。任务存成 `data/tasks/<名字>.md`，开头可选 `名称` / `服务器` / `目录`（也认 `title` / `server` / `cwd`）
 - **代码里的任务**：在“文件”里打开仓库中的任意 `.md`，点“作为任务运行”，就在那个文件所在的目录、那台服务器上新开会话，让 Codex 按文件内容做
-- **技能**：技能是代码里自带的 `SKILL.md`（每个技能一个文件夹）。每次启动 Codex 时，AgentHost 在会话目录所在的整个仓库里找技能（跳过 `node_modules`、`vendor`、`dist`、`build`、`.venv` 等依赖和构建目录），通过 `skills/extraRoots/set` 只交给这一个 Codex 进程，不写 `~/.codex/skills`，也不改 `config.toml`。Codex 自己会读的 `.agents/skills`、`.codex/skills` 不重复交。时间线里会显示“本任务注入了 N 个技能”。Codex 觉得合适就会用；任务里写 `$技能名` 就是要求一定用它（任务编辑页列出了目录里的技能，点一下即可插入）
-- **会话**：一个会话就是一条对话。顶部任务条显示任务的状态、正在做什么、进度，以及暂停、继续、停止、重新运行；点它展开完整的执行过程（命令卡片含工作目录、实时输出、退出码；文件改动有 diff）。对话里只留你说的话、回复和结果，执行过程收成一行。任务结束后再发消息，会接着同一个 Codex 上下文继续做
+- **任务就是 Markdown**：AgentHost 不解析步骤、依赖或条件，也不扫描、注入技能。要用到的说明文件（比如仓库里的 `tools/skills/xxx/SKILL.md`）在任务里写明，Codex 自己去读；Codex 原生会加载的 `.agents/skills`、`.codex/skills` 照常生效
+- **会话**：一个会话就是一条对话。每个任务在对话里收成一行“执行过程”，显示状态、正在做什么、进度，以及暂停、停止按钮；点一下就地展开完整过程（命令卡片含工作目录、实时输出、退出码；文件改动有 diff），里面还有重新运行和日志。任务结束后再发消息，会接着同一个 Codex 上下文继续做
 - **多个 Codex 并行**：输入框下方（以及任务库、运行任务弹窗、“作为任务运行”里）的“1 个 Codex”可以改成 2–8 个。Codex 会把任务拆成互不冲突的几部分，用 Codex 自带的子 agent 同时去做，自己负责分派、检查和汇总；执行过程里每个子 Codex 一张卡片，显示它正在做什么，点开能看它的命令和输出。AgentHost 用 `agents.max_concurrent_threads_per_session` 限制同时干活的子 Codex 数（主 Codex 不算在内），只对这个任务生效。任务库里的任务可以存默认并行数（开头写 `并行: 3`）；会话里接着发的消息沿用上一个任务的设置。token 消耗大约随数量成倍增加
 - **管家**：任务在后台执行时，输入框里的消息发给管家。它是另起的一个只读 Codex，每次都能看到任务的实时状态（执行步骤、最近的命令和输出），负责回答“跑到哪了”“为什么报错”；要改做法（比如“第三步不用做了”），它会转告干活的 Codex，对方当场看到并调整；也可以让它暂停或停止任务。问问题不会打断正在干活的 Codex
 - **Git**：会话目录是 Git 仓库时，顶部显示分支和改动数；点“同步到 Git”，Codex 会检查改动、写提交信息、`pull --rebase` 后推送（不会强推，冲突会停下来问你）
@@ -98,8 +98,6 @@ docker compose logs agenthost     # 查看登录地址和令牌
 | `AGENTHOST_WORKSPACE` | `./workspace` | 本机任务的默认工作目录 |
 | `AGENTHOST_LOCAL_NODE=off` | — | 控制台本机不跑任务 |
 | `AGENTHOST_NODE_TOKEN` | 自动生成，存于 `data/node-token` | 服务器接入用的令牌 |
-| `AGENTHOST_SANDBOX` | `workspace-write` | Codex 沙箱 |
-| `AGENTHOST_APPROVAL_POLICY` | `never` | Codex 审批策略 |
 | `AGENTHOST_MAX_RUNS` | `4` | 同时执行的任务上限 |
 | `AGENTHOST_CODEX_CONFIG` | — | 额外的 `codex -c` 覆盖，`;` 分隔 |
 | `CODEX_BIN` | `codex` | Codex 可执行文件 |
@@ -129,7 +127,6 @@ Codex 接口、API Key、模型、是否允许联网、Git 凭据都在网页的
 | `GET/POST/PATCH` | `/api/sessions…` | 会话；`/sessions/{id}/git`、`/sessions/{id}/git/sync` |
 | `POST` | `/api/sessions/{id}/chat` | 发消息：任务执行中发给管家，否则接着任务继续；`{"text", "task"?}` |
 | `GET/POST/PUT/DELETE` | `/api/tasklib`、`/api/tasklib/{name}` | 任务库 |
-| `GET` | `/api/skills?node=&path=` | 某个目录（所在仓库）里的技能 |
 | `GET` | `/api/nodes`、`/api/files`、`/api/files/content` | 服务器、文件浏览 |
 | `GET/PUT` | `/api/settings` | 设置（密钥只写不读） |
 | `GET` | `/api/events` | Server-Sent Events 实时推送 |
@@ -141,4 +138,4 @@ go test ./...                         # 后端测试（用模拟的 codex app-se
 cd web && npm install && npm run dev  # 前端开发服务器，/api 代理到 :8080
 ```
 
-目录：`cmd/agenthost` 入口与 `node` 子命令 · `internal/node` 服务器抽象、本机执行、WebSocket 隧道 · `internal/codex` app-server 客户端 · `internal/engine` 调度、任务库、技能注入、设置、文件、Git · `internal/workflow` 旧版 workflow 解析（兼容老任务） · `internal/server` HTTP · `web/` 前端 · `tasks/` 示例任务。
+目录：`cmd/agenthost` 入口与 `node` 子命令 · `internal/node` 服务器抽象、本机执行、WebSocket 隧道 · `internal/codex` app-server 客户端 · `internal/engine` 运行任务、任务库、管家、设置、文件、Git · `internal/server` HTTP · `web/` 前端 · `tasks/` 示例任务。

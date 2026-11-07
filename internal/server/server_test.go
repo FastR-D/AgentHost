@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -14,8 +13,7 @@ import (
 // The task library API accepts exactly what the web UI sends.
 func TestTaskLibAPI(t *testing.T) {
 	dir := t.TempDir()
-	lib, _ := engine.NewLibrary(dir+"/wf", nil)
-	eng, err := engine.New(engine.Config{DataDir: dir + "/data", Workspace: dir + "/ws", CodexBin: "/bin/false"}, lib) // never a real Codex
+	eng, err := engine.New(engine.Config{DataDir: dir + "/data", Workspace: dir + "/ws", CodexBin: "/bin/false"}) // never a real Codex
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,11 +50,11 @@ func TestTaskLibAPI(t *testing.T) {
 	if code != http.StatusCreated || m["session"].(map[string]any)["cwd"] != dir+"/ws/reports" || m["run"].(map[string]any)["taskTitle"] != "写周报" {
 		t.Fatalf("start task: %d %v", code, m)
 	}
-	// Skills in a directory.
-	os.MkdirAll(dir+"/ws/reports/skills/fmt", 0o755)
-	os.WriteFile(dir+"/ws/reports/skills/fmt/SKILL.md", []byte("---\nname: fmt\ndescription: 排版\n---\n"), 0o644)
-	if code, m := do("GET", "/api/skills?path=reports", ""); code != 200 || len(m["skills"].([]any)) != 1 {
-		t.Fatalf("skills: %d %v", code, m)
+	// The workflow and skill APIs are gone.
+	for _, p := range []string{"/api/workflows", "/api/skills?path=reports"} {
+		if code, _ := do("GET", p, ""); code != http.StatusNotFound {
+			t.Fatalf("%s: %d", p, code)
+		}
 	}
 	if code, _ := do("DELETE", "/api/tasklib/写周报", ""); code != http.StatusOK {
 		t.Fatalf("delete: %d", code)

@@ -1,5 +1,5 @@
-// Command agenthost runs the AgentHost server: a remote web console for
-// driving the Codex CLI with chat messages and Markdown workflows.
+// Command agenthost runs the AgentHost server: a remote web console that
+// hands messages and Markdown tasks to the Codex CLI.
 package main
 
 import (
@@ -49,14 +49,11 @@ func main() {
 		switch os.Args[1] {
 		case "node":
 			os.Exit(runNode(os.Args[2:]))
-		case "check":
-			os.Exit(runCheck(os.Args[2:]))
 		}
 	}
 	addr := flag.String("addr", env("AGENTHOST_ADDR", "0.0.0.0:8080"), "listen address (AGENTHOST_ADDR)")
 	dataDir := flag.String("data", env("AGENTHOST_DATA", "./data"), "data directory (AGENTHOST_DATA)")
 	workspace := flag.String("workspace", env("AGENTHOST_WORKSPACE", "./workspace"), "default working directory for tasks (AGENTHOST_WORKSPACE)")
-	wfDir := flag.String("workflows", env("AGENTHOST_WORKFLOWS", ""), "workflow library directory (AGENTHOST_WORKFLOWS, default <data>/workflows)")
 	webDir := flag.String("web", env("AGENTHOST_WEB_DIR", ""), "serve the web UI from this directory instead of the embedded build")
 	flag.Parse()
 
@@ -70,10 +67,6 @@ func main() {
 		return a
 	}
 	*dataDir, *workspace = abs(*dataDir), abs(*workspace)
-	if *wfDir == "" {
-		*wfDir = filepath.Join(*dataDir, "workflows")
-	}
-	*wfDir = abs(*wfDir)
 	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
 		fatal("create data dir", err)
 	}
@@ -99,12 +92,7 @@ func main() {
 	}
 	maxRuns, _ := strconv.Atoi(env("AGENTHOST_MAX_RUNS", "4"))
 
-	lib, err := engine.NewLibrary(*wfDir, nil)
-	if err != nil {
-		fatal("open workflow library", err)
-	}
-	tasks, err := engine.OpenTaskLib(filepath.Join(*dataDir, "tasks"), agenthost.ExampleTasks(),
-		engine.LegacyDirs{Workflows: *wfDir, Skills: filepath.Join(*dataDir, "skills-lib")})
+	tasks, err := engine.OpenTaskLib(filepath.Join(*dataDir, "tasks"), agenthost.ExampleTasks())
 	if err != nil {
 		fatal("open task library", err)
 	}
@@ -125,8 +113,6 @@ func main() {
 		CodexBin:          codexBin,
 		CodexArgs:         codexArgs,
 		DefaultModel:      env("AGENTHOST_MODEL", ""),
-		DefaultSandbox:    env("AGENTHOST_SANDBOX", "workspace-write"),
-		ApprovalPolicy:    env("AGENTHOST_APPROVAL_POLICY", "never"),
 		ApprovalDecision:  env("AGENTHOST_APPROVAL_DECISION", "decline"),
 		ReasoningSummary:  env("AGENTHOST_REASONING_SUMMARY", "auto"),
 		MaxConcurrentRuns: maxRuns,
@@ -134,7 +120,7 @@ func main() {
 	if cfg.ReasoningSummary == "default" || cfg.ReasoningSummary == "off" {
 		cfg.ReasoningSummary = ""
 	}
-	eng, err := engine.New(cfg, lib)
+	eng, err := engine.New(cfg)
 	if err != nil {
 		fatal("start engine", err)
 	}
@@ -160,10 +146,9 @@ func main() {
 		"codexArgs":      codexArgs,
 		"workspace":      *workspace,
 		"dataDir":        *dataDir,
-		"workflowsDir":   *wfDir,
 		"defaultModel":   cfg.DefaultModel,
-		"defaultSandbox": cfg.DefaultSandbox,
-		"approvalPolicy": cfg.ApprovalPolicy,
+		"defaultSandbox": engine.CodexSandbox,
+		"approvalPolicy": engine.CodexApproval,
 		"maxRuns":        maxRuns,
 		"authEnabled":    token != "",
 	}
@@ -173,7 +158,7 @@ func main() {
 		Handler:           server.New(eng, token, static, info),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
-	slog.Info("AgentHost started", "addr", ln.Addr().String(), "workspace", *workspace, "data", *dataDir, "workflows", *wfDir, "codex", codexVersion)
+	slog.Info("AgentHost started", "addr", ln.Addr().String(), "workspace", *workspace, "data", *dataDir, "codex", codexVersion)
 	printBanner(ln.Addr().String(), token)
 
 	go func() {

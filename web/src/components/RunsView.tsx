@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Bot, Eraser, LayoutList, Loader2, Trash2, Users, Workflow as WorkflowIcon } from "lucide-react";
+import { Bot, Eraser, LayoutList, Loader2, Trash2, Users } from "lucide-react";
 import { api } from "../api";
 import { guard, isTaskRun, navigate, nodeName, toast, useCurrentNode, useStore } from "../store";
 import type { Run, RunStats } from "../types";
 import { isActive } from "../types";
 import { StatusBadge, Elapsed, fmtTime, statusLabel } from "../lib/format";
 import { Sheet } from "./DirPicker";
-import { ProgressBar, RunControls, progressUnits } from "./StepCard";
+import { ProgressBar, RunControls, progressUnits } from "./RunControls";
 import { isMultiParallel, parallelLabel } from "./Parallel";
 
 const filters = [
@@ -223,11 +223,7 @@ export function RunsView() {
                 )}
               >
                 <div className="flex items-center gap-2">
-                  {r.kind === "workflow" ? (
-                    <WorkflowIcon className="h-4 w-4 shrink-0 text-info" />
-                  ) : (
-                    <Bot className="h-4 w-4 shrink-0 text-muted" />
-                  )}
+                  <Bot className="h-4 w-4 shrink-0 text-muted" />
                   <button onClick={() => open(r)} className="min-w-0 flex-1 truncate text-left font-medium hover:underline">
                     {r.title}
                   </button>
@@ -246,7 +242,7 @@ export function RunsView() {
                   {session && session.title !== r.title && <span className="max-w-full truncate">会话「{session.title}」</span>}
                 </div>
                 <div className="truncate font-mono text-[11.5px] text-faint">{r.cwd}</div>
-                {(r.kind === "workflow" || units.length > 1) && (
+                {units.length > 1 && (
                   <div className="mt-2 flex flex-wrap items-center gap-1">
                     {units.map((s, i) => (
                       <span

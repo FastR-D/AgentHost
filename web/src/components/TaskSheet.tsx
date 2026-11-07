@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Check, ChevronRight, ClipboardList, Loader2, Play, Plus, Sparkles } from "lucide-react";
+import { Check, ChevronRight, ClipboardList, Loader2, Play, Plus } from "lucide-react";
 import { api } from "../api";
-import { navigate, toast, useCurrentNode, useStore } from "../store";
-import type { SkillScan, Task } from "../types";
+import { navigate, toast, useCurrentNode } from "../store";
+import type { Task } from "../types";
 import { Sheet } from "./DirPicker";
 import { ParallelChip, isMultiParallel, parallelLabel } from "./Parallel";
 
@@ -33,74 +33,6 @@ export const tasksFor = (list: Task[], node: string) => list.filter((t) => !t.no
 
 /** Where a task runs on its server, for display. */
 export const taskWhere = (t: Pick<Task, "node" | "cwd">) => t.cwd || (t.node ? "" : "所有服务器通用");
-
-/** Skills found in the code of a directory: what a task run there gets. */
-export function RepoSkills({
-  node,
-  path,
-  onPick,
-  empty,
-}: {
-  node?: string;
-  path?: string;
-  onPick?: (name: string) => void;
-  empty?: React.ReactNode;
-}) {
-  const defaultNode = useStore((s) => s.defaultNode);
-  const nd = node || defaultNode;
-  const [scan, setScan] = useState<SkillScan | null>(null);
-  const [err, setErr] = useState("");
-  useEffect(() => {
-    if (!path) return;
-    let live = true;
-    setScan(null);
-    setErr("");
-    api
-      .skills(nd, path)
-      .then((s) => live && setScan(s))
-      .catch((e) => live && setErr(e.message));
-    return () => {
-      live = false;
-    };
-  }, [nd, path]);
-
-  if (!path) return <>{empty}</>;
-  if (err) return <div className="text-[12px] text-bad">{err}</div>;
-  if (!scan)
-    return (
-      <div className="flex items-center gap-1.5 text-[12px] text-faint">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" /> 正在查找代码里的技能…
-      </div>
-    );
-  if (scan.skills.length === 0)
-    return <div className="text-[12px] text-faint">这份代码里没有技能（没有找到 SKILL.md）。</div>;
-  return (
-    <div className="space-y-1">
-      {scan.skills.map((s) => (
-        <button
-          key={s.path}
-          type="button"
-          disabled={!onPick}
-          onClick={() => onPick?.(s.name)}
-          className={clsx("flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left", onPick && "hover:bg-sunken")}
-          title={onPick ? `插入 $${s.name}：要求这个任务一定用它` : s.path}
-        >
-          <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-info" />
-          <span className="min-w-0 flex-1">
-            <span className="flex flex-wrap items-baseline gap-x-1.5">
-              <span className="font-mono text-[12.5px] font-medium">${s.name}</span>
-              <span className="truncate font-mono text-[11px] text-faint">{s.rel || "."}</span>
-              {s.native && <span className="text-[11px] text-faint">· Codex 自己会加载</span>}
-            </span>
-            {s.description && <span className="line-clamp-2 text-[12px] text-muted">{s.description}</span>}
-          </span>
-        </button>
-      ))}
-      {scan.truncated && <div className="px-2 text-[11.5px] text-faint">技能太多，只列出前 100 个</div>}
-      <div className="px-2 pt-0.5 text-[11.5px] text-faint">来自 {scan.root}</div>
-    </div>
-  );
-}
 
 /** Choose a saved task, optionally add a note, and run it. */
 export function TaskSheet({

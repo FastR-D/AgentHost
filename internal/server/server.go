@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"agenthost/internal/engine"
-	"agenthost/internal/workflow"
 )
 
 const cookieName = "agenthost_token"
@@ -63,7 +62,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func writeErr(w http.ResponseWriter, err error) {
 	code := http.StatusInternalServerError
 	var he *httpError
-	var pe *workflow.ParseError
 	switch {
 	case errors.As(err, &he):
 		code = he.code
@@ -71,8 +69,6 @@ func writeErr(w http.ResponseWriter, err error) {
 		code = http.StatusNotFound
 	case errors.Is(err, engine.ErrBusy):
 		code = http.StatusConflict
-	case errors.As(err, &pe):
-		code = http.StatusBadRequest
 	default:
 		// Most engine errors are validation problems with a readable message.
 		if !strings.Contains(err.Error(), "permission denied") {
@@ -197,12 +193,8 @@ func (s *Server) handleAPI(w http.ResponseWriter, r *http.Request) {
 		err = s.createTask(w, r)
 	case parts[0] == "runs":
 		err = s.routeRuns(w, r, parts[1:])
-	case parts[0] == "workflows":
-		err = s.routeWorkflows(w, r, parts[1:])
 	case parts[0] == "tasklib":
 		err = s.routeTaskLib(w, r, parts[1:])
-	case parts[0] == "skills" && len(parts) == 1 && m == http.MethodGet:
-		err = s.listSkills(w, r)
 	case parts[0] == "fs" && m == http.MethodGet:
 		err = s.listDirs(w, r)
 	case parts[0] == "nodes":
@@ -397,45 +389,29 @@ func (s *Server) routeSessions(w http.ResponseWriter, r *http.Request, parts []s
 			return err
 		}
 		writeJSON(w, 201, b)
-	case len(parts) == 2 && parts[1] == "workflow" && m == http.MethodPost:
-		var req engine.WorkflowRequest
-		if err := readJSON(r, &req); err != nil {
-			return err
-		}
-		req.SessionID = parts[0]
-		b, err := s.eng.StartWorkflow(req)
-		if err != nil {
-			return err
-		}
-		writeJSON(w, 201, b)
 	default:
 		return &httpError{http.StatusNotFound, "unknown endpoint"}
 	}
 	return nil
 }
 
-// createTask creates a session when needed and starts a chat or workflow run in it.
+// createTask creates a session when needed and starts a run in it.
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) error {
 	var body struct {
-		SessionID string            `json:"sessionId"`
-		Title     string            `json:"title"`
-		Cwd       string            `json:"cwd"`
-		Text      string            `json:"text"`
-		Workflow  string            `json:"workflow"`
-		Source    string            `json:"source"`
-		Vars      map[string]string `json:"vars"`
-		Model     string            `json:"model"`
-		Sandbox   string            `json:"sandbox"`
-		Mode      string            `json:"mode"`
-		NodeID    string            `json:"nodeId"`
-		Task      string            `json:"task"`     // a task from the library
-		TaskFile  string            `json:"taskFile"` // or a Markdown file on the server
-		Parallel  int               `json:"parallel"` // Codex working on it at once
+		SessionID string `json:"sessionId"`
+		Title     string `json:"title"`
+		Cwd       string `json:"cwd"`
+		Text      string `json:"text"`
+		Model     string `json:"model"`
+		NodeID    string `json:"nodeId"`
+		Task      string `json:"task"`     // a task from the library
+		TaskFile  string `json:"taskFile"` // or a Markdown file on the server
+		Parallel  int    `json:"parallel"` // Codex working on it at once
 	}
 	if err := readJSON(r, &body); err != nil {
 		return err
 	}
-	if body.Workflow == "" && strings.TrimSpace(body.Source) == "" && strings.TrimSpace(body.Text) == "" && body.Task == "" && body.TaskFile == "" {
+	if strings.TrimSpace(body.Text) == "" && body.Task == "" && body.TaskFile == "" {
 		return bad("需要提供 text（任务描述）、task（任务库里的任务）或 taskFile（服务器上的 Markdown 文件）")
 	}
 	sid := body.SessionID
@@ -459,17 +435,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) error {
 		}
 		sid, created = sess.ID, true
 	}
-	var b json.RawMessage
-	var err error
-	if body.Workflow != "" || strings.TrimSpace(body.Source) != "" {
-		cwd := ""
-		if !created {
-			cwd = body.Cwd
-		}
-		b, err = s.eng.StartWorkflow(engine.WorkflowRequest{SessionID: sid, Name: body.Workflow, Source: body.Source, Cwd: cwd, Vars: body.Vars, Model: body.Model, Sandbox: body.Sandbox, Mode: body.Mode})
-	} else {
-		b, err = s.eng.StartChat(engine.ChatRequest{SessionID: sid, Text: body.Text, Task: body.Task, TaskFile: body.TaskFile, Parallel: body.Parallel, Model: body.Model, Sandbox: body.Sandbox})
-	}
+	b, err := s.eng.StartChat(engine.ChatRequest{SessionID: sid, Text: body.Text, Task: body.Task, TaskFile: body.TaskFile, Parallel: body.Parallel, Model: body.Model})
 	if err != nil {
 		if created {
 			_ = s.eng.DeleteSession(sid)
@@ -566,80 +532,6 @@ func (s *Server) routeRuns(w http.ResponseWriter, r *http.Request, parts []strin
 	return nil
 }
 
-// ---------------------------------------------------------------- workflows
-
-type parseResult struct {
-	Workflow *workflow.Workflow `json:"workflow,omitempty"`
-	Layers   [][]string         `json:"layers,omitempty"`
-	Warnings []string           `json:"warnings,omitempty"`
-	Error    string             `json:"error,omitempty"`
-	Line     int                `json:"line,omitempty"`
-}
-
-func parseSource(src, name string, mode ...string) parseResult {
-	m := ""
-	if len(mode) > 0 {
-		m = mode[0]
-	}
-	wf, err := workflow.ParseMode(src, name, m)
-	if err != nil {
-		res := parseResult{Error: err.Error()}
-		var pe *workflow.ParseError
-		if errors.As(err, &pe) {
-			res.Line = pe.Line
-		}
-		return res
-	}
-	wf.Body = ""
-	return parseResult{Workflow: wf, Layers: wf.Layers(), Warnings: workflow.Lint(wf)}
-}
-
-func (s *Server) routeWorkflows(w http.ResponseWriter, r *http.Request, parts []string) error {
-	lib := s.eng.Library()
-	m := r.Method
-	switch {
-	case len(parts) == 0 && m == http.MethodGet:
-		writeJSON(w, 200, map[string]any{"dir": lib.Dir(), "workflows": lib.List()})
-	case len(parts) == 1 && parts[0] == "parse" && m == http.MethodPost:
-		var body struct {
-			Source string `json:"source"`
-			Name   string `json:"name"`
-			Mode   string `json:"mode"`
-		}
-		if err := readJSON(r, &body); err != nil {
-			return err
-		}
-		writeJSON(w, 200, parseSource(body.Source, strings.TrimSuffix(body.Name, ".md"), body.Mode))
-	case len(parts) == 1 && m == http.MethodGet:
-		src, err := lib.Read(parts[0])
-		if err != nil {
-			return err
-		}
-		name, _ := engine.CleanName(parts[0])
-		writeJSON(w, 200, map[string]any{"name": name, "source": src, "parsed": parseSource(src, strings.TrimSuffix(name, ".md"))})
-	case len(parts) == 1 && m == http.MethodPut:
-		var body struct {
-			Source string `json:"source"`
-		}
-		if err := readJSON(r, &body); err != nil {
-			return err
-		}
-		name, err := lib.Save(parts[0], body.Source)
-		if err != nil {
-			return err
-		}
-		writeJSON(w, 200, map[string]any{"name": name, "parsed": parseSource(body.Source, strings.TrimSuffix(name, ".md"))})
-	case len(parts) == 1 && m == http.MethodDelete:
-		if err := lib.Delete(parts[0]); err != nil {
-			return err
-		}
-		writeJSON(w, 200, map[string]bool{"ok": true})
-	default:
-		return &httpError{http.StatusNotFound, "unknown endpoint"}
-	}
-	return nil
-}
-
 // routeTaskLib serves the task library: saved task descriptions.
 func (s *Server) routeTaskLib(w http.ResponseWriter, r *http.Request, parts []string) error {
 	lib := s.eng.Tasks()
@@ -685,17 +577,6 @@ func (s *Server) routeTaskLib(w http.ResponseWriter, r *http.Request, parts []st
 	default:
 		return &httpError{http.StatusNotFound, "unknown endpoint"}
 	}
-	return nil
-}
-
-// listSkills lists the skills found in a directory (and its repository) on a server.
-func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) error {
-	q := r.URL.Query()
-	scan, err := s.eng.DiscoverSkills(q.Get("node"), q.Get("path"))
-	if err != nil {
-		return bad(err.Error())
-	}
-	writeJSON(w, 200, scan)
 	return nil
 }
 

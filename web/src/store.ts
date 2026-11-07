@@ -71,8 +71,6 @@ interface State {
   connected: boolean;
   toasts: Toast[];
   logsPanel?: { runId: string; stepId?: string };
-  /** Run whose execution details are open. */
-  processRun?: string;
   /** Runs deleted while this page was open (lists drop them). */
   deletedRuns: Record<string, true>;
   nodes: NodeInfo[];
@@ -144,8 +142,6 @@ function mergeRun(old: Run | undefined, next: Run): Run {
   return {
     ...old,
     ...next,
-    source: next.source ?? old.source,
-    workflow: next.workflow ?? old.workflow,
     steps,
   };
 }
@@ -362,8 +358,6 @@ export function openLogs(runId: string, stepId?: string) {
   void loadLogs(runId);
 }
 
-export const openProcess = (runId: string) => set({ processRun: runId });
-export const closeProcess = () => set({ processRun: undefined });
 
 export function closeLogs() {
   const p = get().logsPanel;
@@ -381,7 +375,7 @@ export async function control(runId: string, action: "pause" | "resume" | "stop"
 }
 
 /** The task runs of a session (not the manager's replies). */
-export const isTaskRun = (r: Run) => r.kind !== "manager" && !r.parentRunId;
+export const isTaskRun = (r: Run) => r.kind !== "manager";
 
 /** Runs of a session that appear as messages, in order. */
 export function sessionRuns(s: State, sessionId: string): Run[] {

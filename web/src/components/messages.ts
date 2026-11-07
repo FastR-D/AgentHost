@@ -11,12 +11,13 @@ type Part = Exclude<ThreadMessageLike["content"], string>[number];
 
 const data = (name: string, d: Record<string, unknown>) => ({ type: `data-${name}`, data: d }) as Part;
 
-/** The Codex reply to show in the conversation: its final answer. */
-export function finalText(run: Run): string {
+/** The Codex message shown in the conversation: its final answer. */
+export function finalItem(run: Run) {
   const items = (run.steps[0]?.items ?? []).filter((it) => it.kind === "message" && !it.threadId && it.text);
-  const final = [...items].reverse().find((it) => it.phase === "final_answer") ?? items[items.length - 1];
-  return final?.text ?? "";
+  return [...items].reverse().find((it) => it.phase === "final_answer") ?? items[items.length - 1];
 }
+
+export const finalText = (run: Run): string => finalItem(run)?.text ?? "";
 
 /** Manager tools the user should see as actions. */
 const ACTIONS = new Set(["send_to_task", "pause_task", "resume_task", "stop_task"]);
@@ -35,7 +36,6 @@ function managerParts(run: Run): Part[] {
 }
 
 function userContent(run: Run): ThreadMessageLike["content"] {
-  if (run.kind === "workflow") return [data("workflow-request", { runId: run.id })];
   if (run.task || run.taskFile) return [data("task-request", { runId: run.id })];
   return [{ type: "text", text: run.prompt }];
 }
@@ -43,7 +43,7 @@ function userContent(run: Run): ThreadMessageLike["content"] {
 const done = { type: "complete", reason: "stop" } as const;
 
 /** Converts a session's runs into one conversation. A task's execution is
- *  one compact line (details open in a sheet); its result follows. While a
+ *  one line that unfolds in place; its result follows. While a
  *  task runs, the user's questions and the manager's answers come in between,
  *  and the result appears when the task finishes. */
 export function buildMessages(runs: Run[]): ThreadMessageLike[] {
@@ -59,13 +59,6 @@ export function buildMessages(runs: Run[]): ThreadMessageLike[] {
 
     if (run.kind === "manager") {
       push(created, { id: `${run.id}:assistant`, role: "assistant", content: managerParts(run), status: isActive(run.status) ? { type: "running" } : done, metadata: meta });
-      continue;
-    }
-    if (run.kind === "workflow") {
-      const parts: Part[] = [data("run-header", { runId: run.id })];
-      for (const st of run.steps) parts.push(data("step", { runId: run.id, stepId: st.id }));
-      parts.push(isActive(run.status) ? data("activity", { runId: run.id }) : data("result", { runId: run.id }));
-      push(created, { id: `${run.id}:assistant`, role: "assistant", content: parts, status: done, metadata: meta });
       continue;
     }
 

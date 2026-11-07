@@ -15,7 +15,7 @@ Requirements:
 
 Configuration in deploy/.fab.env:
     AGENTHOST_HOST          SSH target, e.g. root@8.219.191.172
-    AGENTHOST_DIR           remote install directory (default /opt/agenthost)
+    AGENTHOST_DIR           remote install directory (default /work/agenthost-linux-amd64)
     AGENTHOST_SSH_KEY       path to SSH private key (e.g. ~/.ssh/id_ed25519)
     AGENTHOST_SSH_PASSWORD  or use password auth
 """
@@ -42,7 +42,7 @@ def _load_env():
 _load_env()
 
 DEFAULT_HOST    = os.environ.get("AGENTHOST_HOST", "root@8.219.191.172")
-REMOTE_DIR      = os.environ.get("AGENTHOST_DIR",  "/opt/agenthost")
+REMOTE_DIR      = os.environ.get("AGENTHOST_DIR",  "/work/agenthost-linux-amd64")
 DEPLOY_KEY      = os.environ.get("AGENTHOST_SSH_KEY", "")
 DEPLOY_PASSWORD = os.environ.get("AGENTHOST_SSH_PASSWORD", "")
 REPO_ROOT       = Path(__file__).parent.parent  # project root
@@ -85,9 +85,9 @@ def deploy(c, host=None, skip_build=False):
     # ensure dir exists
     c.run(f"mkdir -p {REMOTE_DIR}/bin", hide=True)
 
-    # upload the freshly built binary
-    c.put(str(REPO_ROOT / "bin" / "agenthost-linux-amd64"), f"{REMOTE_DIR}/bin/agenthost")
-    c.run(f"chmod +x {REMOTE_DIR}/bin/agenthost", hide=True)
+    # upload next to the running binary (overwriting it in place fails: text file busy)
+    c.put(str(REPO_ROOT / "bin" / "agenthost-linux-amd64"), f"{REMOTE_DIR}/bin/agenthost.new")
+    c.run(f"chmod +x {REMOTE_DIR}/bin/agenthost.new", hide=True)
 
     # upload start.sh (picks up any changes)
     c.put(str(REPO_ROOT / "start.sh"), f"{REMOTE_DIR}/start.sh")
@@ -101,22 +101,27 @@ def deploy(c, host=None, skip_build=False):
     )
 
     # stop old process
-    c.run(f"pkill -f '{REMOTE_DIR}/bin/agenthost' || true", hide=True, warn=True)
-    time.sleep(1)
+    # (it may have been started as ./bin/agenthost, so match the process name, not the path)
+    c.run(
+        f"cd {REMOTE_DIR}; kill $(cat agenthost.pid 2>/dev/null) 2>/dev/null; pkill -x agenthost; "
+        f"for i in $(seq 20); do pgrep -x agenthost >/dev/null || break; sleep 0.5; done; "
+        f"mv -f bin/agenthost.new bin/agenthost",
+        hide=True, warn=True,
+    )
 
-    # start detached (setsid so it survives SSH session close)
+    # start detached (setsid so it survives SSH session close); .env holds
+    # AGENTHOST_ADDR / AGENTHOST_LOCAL_NODE etc. — the binary does not read it itself
     c.run(
         f"cd {REMOTE_DIR} && "
-        f"rm -f agenthost.log && "
-        f"setsid ./bin/agenthost >> agenthost.log 2>&1 </dev/null & "
-        f"sleep 2 && pgrep -n -f '{REMOTE_DIR}/bin/agenthost' > agenthost.pid && "
-        f"echo pid=$(cat agenthost.pid)",
+        f"set -a && {{ [ ! -f .env ] || . ./.env; }} && set +a && "
+        f"(setsid {REMOTE_DIR}/bin/agenthost >> agenthost.log 2>&1 </dev/null & echo $! > agenthost.pid) && "
+        f"sleep 2 && echo pid=$(cat agenthost.pid)",
         echo=True,
     )
 
     time.sleep(3)
     c.run(f"tail -8 {REMOTE_DIR}/agenthost.log", echo=True)
-    r = c.run("curl -fsS http://127.0.0.1:80/healthz && echo ' healthz OK'", warn=True)
+    r = c.run("curl -fsS http://127.0.0.1:8080/healthz && echo ' healthz OK'", warn=True)
     if "OK" not in (r.stdout + r.stderr):
         print("WARNING: healthz failed — check logs with: fab logs")
     else:
@@ -127,7 +132,7 @@ def deploy(c, host=None, skip_build=False):
 def stop(c, host=None):
     """Stop the running AgentHost process."""
     c = _conn(host)
-    c.run(f"pkill -f '{REMOTE_DIR}/bin/agenthost' || true", warn=True)
+    c.run("pkill -x agenthost || true", warn=True)
     c.run(f"rm -f {REMOTE_DIR}/agenthost.pid", hide=True, warn=True)
     print("stopped")
 

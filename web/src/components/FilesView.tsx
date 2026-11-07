@@ -24,7 +24,6 @@ import type { FileList, FileView as FV } from "../types";
 import { fmtRelative } from "../lib/format";
 import { Markdown } from "./Markdown";
 import { Sheet, WhereChip } from "./DirPicker";
-import { RepoSkills } from "./TaskSheet";
 import { ParallelChip } from "./Parallel";
 
 export function fmtSize(n: number) {
@@ -115,10 +114,6 @@ function RunFileSheet({ node, path, onClose }: { node: string; path: string; onC
           placeholder="补充说明（可选），会接在文件内容后面"
         />
         <ParallelChip value={parallel} onChange={setParallel} />
-        <div className="rounded-xl border border-line bg-panel p-3">
-          <div className="mb-1.5 text-[13px] font-medium">会交给 Codex 的技能</div>
-          <RepoSkills node={node} path={dir} />
-        </div>
       </div>
     </Sheet>
   );

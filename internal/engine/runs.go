@@ -16,8 +16,8 @@ type RunStats struct {
 	Counts map[string]int `json:"counts"`
 }
 
-// isTaskRun is a run the user started (not a manager reply or a sub-workflow).
-func isTaskRun(r *Run) bool { return r.ParentRunID == "" && r.Kind != KindManager }
+// isTaskRun is a run the user started (not a manager reply).
+func isTaskRun(r *Run) bool { return r.Kind != KindManager }
 
 func (e *Engine) RunStats(nodeID string) RunStats {
 	e.mu.Lock()
@@ -37,7 +37,7 @@ func (e *Engine) RunStats(nodeID string) RunStats {
 }
 
 // DeleteRun removes a finished task run with everything that belongs to it:
-// sub-workflow runs, the manager's answers about it and its logs. A session
+// the manager's answers about it and its logs. A session
 // left without runs goes too.
 func (e *Engine) DeleteRun(id string) error {
 	e.mu.Lock()
@@ -46,9 +46,6 @@ func (e *Engine) DeleteRun(id string) error {
 	case r == nil:
 		e.mu.Unlock()
 		return ErrNotFound
-	case r.ParentRunID != "":
-		e.mu.Unlock()
-		return errors.New("子 workflow 会随它的父任务一起删除")
 	case r.Status.Active():
 		e.mu.Unlock()
 		return errors.New("任务还在运行，先停止它再删除")
@@ -96,17 +93,10 @@ func (e *Engine) removeRunsLocked(top []*Run) (runIDs, sessionIDs []string) {
 	for _, r := range top {
 		gone[r.ID] = true
 	}
-	// Sub-workflows (any depth) and the manager's answers about these runs.
-	for changed := true; changed; {
-		changed = false
-		for _, r := range e.runs {
-			if gone[r.ID] || r.Status.Active() {
-				continue
-			}
-			if (r.ParentRunID != "" && gone[r.ParentRunID]) || (r.Kind == KindManager && gone[r.Target]) {
-				gone[r.ID] = true
-				changed = true
-			}
+	// The manager's answers about these runs.
+	for _, r := range e.runs {
+		if !gone[r.ID] && !r.Status.Active() && r.Kind == KindManager && gone[r.Target] {
+			gone[r.ID] = true
 		}
 	}
 	touched := map[string]bool{}

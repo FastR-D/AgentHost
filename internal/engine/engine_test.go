@@ -10,12 +10,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
-	"testing/fstest"
 	"time"
 )
 
@@ -57,7 +55,6 @@ func fakeAppServer() {
 		return <-ch
 	}
 	var dynTools []string
-	var skillRoots []string
 	thread := ""
 	interrupted := make(chan struct{}, 1)
 	steered := make(chan string, 4)
@@ -94,23 +91,6 @@ func fakeAppServer() {
 		switch msg.Method {
 		case "initialize":
 			reply(map[string]any{"userAgent": "fake"})
-		case "skills/extraRoots/set":
-			var p struct {
-				ExtraRoots []string `json:"extraRoots"`
-			}
-			json.Unmarshal(msg.Params, &p)
-			skillRoots = p.ExtraRoots
-			reply(map[string]any{})
-		case "skills/list":
-			var p struct {
-				Cwds []string `json:"cwds"`
-			}
-			json.Unmarshal(msg.Params, &p)
-			var data []any
-			for _, cwd := range p.Cwds {
-				data = append(data, map[string]any{"cwd": cwd, "skills": fakeSkills(cwd, skillRoots), "errors": []any{}})
-			}
-			reply(map[string]any{"data": data})
 		case "thread/start":
 			var p struct {
 				DynamicTools []struct {
@@ -166,11 +146,7 @@ func fakeAppServer() {
 			}
 			json.Unmarshal(msg.Params, &p)
 			prompt := ""
-			var skills []string
 			for _, in := range p.Input {
-				if in.Type == "skill" {
-					skills = append(skills, in.Name)
-				}
 				prompt += in.Text
 			}
 			turnN++
@@ -306,16 +282,6 @@ func fakeAppServer() {
 				notify("item/started", with(map[string]any{"item": map[string]any{"type": "agentMessage", "id": msgID, "text": "", "phase": "final_answer"}}))
 				first := strings.SplitN(prompt, "\n", 2)[0]
 				answer := "DONE: " + first
-				if len(skillRoots) > 0 {
-					var names []string
-					for _, r := range skillRoots {
-						names = append(names, filepath.Base(r))
-					}
-					answer += " [roots " + strings.Join(names, ",") + "]"
-				}
-				for _, sk := range skills {
-					answer += " [skill " + sk + "]"
-				}
 				for _, part := range []string{answer} {
 					notify("item/agentMessage/delta", with(map[string]any{"itemId": msgID, "delta": part}))
 				}
@@ -328,45 +294,6 @@ func fakeAppServer() {
 	}
 }
 
-// fakeSkills answers skills/list like Codex: .agents/skills from cwd up to
-// the repository root, plus every SKILL.md under the extra roots.
-func fakeSkills(cwd string, roots []string) []any {
-	out := []any{}
-	add := func(path, scope string) {
-		name := filepath.Base(filepath.Dir(path))
-		if b, err := os.ReadFile(path); err == nil {
-			if m := regexp.MustCompile(`(?m)^name:\s*(\S+)`).FindSubmatch(b); m != nil {
-				name = string(m[1])
-			}
-		}
-		out = append(out, map[string]any{"name": name, "description": "", "path": path, "scope": scope, "enabled": true})
-	}
-	for d := cwd; ; d = filepath.Dir(d) {
-		found, _ := filepath.Glob(filepath.Join(d, ".agents/skills/*/SKILL.md"))
-		for _, f := range found {
-			add(f, "repo")
-		}
-		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil || d == filepath.Dir(d) {
-			break
-		}
-	}
-	for _, r := range roots {
-		filepath.WalkDir(r, func(p string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() && p != r && strings.HasPrefix(d.Name(), ".") {
-				return filepath.SkipDir
-			}
-			if !d.IsDir() && d.Name() == "SKILL.md" {
-				add(p, "user")
-			}
-			return nil
-		})
-	}
-	return out
-}
-
 func contains(xs []string, x string) bool {
 	for _, y := range xs {
 		if y == x {
@@ -376,22 +303,13 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
-func newTestEngine(t *testing.T, workflows map[string]string) *Engine {
+func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 	dir := t.TempDir()
 	os.Setenv("FAKE_CODEX", "1")
 	t.Cleanup(func() { os.Unsetenv("FAKE_CODEX") })
-	lib, err := NewLibrary(dir+"/workflows", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for name, src := range workflows {
-		if _, err := lib.Save(name, src); err != nil {
-			t.Fatal(err)
-		}
-	}
 	exe, _ := os.Executable()
-	e, err := New(Config{DataDir: dir + "/data", Workspace: dir + "/ws", CodexBin: exe}, lib)
+	e, err := New(Config{DataDir: dir + "/data", Workspace: dir + "/ws", CodexBin: exe})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,17 +361,8 @@ func waitDone(t *testing.T, e *Engine, id string) Run {
 	return e.snapshot(id)
 }
 
-func stepByID(r Run, id string) *Step {
-	for _, st := range r.Steps {
-		if st.ID == id {
-			return st
-		}
-	}
-	return nil
-}
-
 func TestChatRunAndFollowUp(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	s, err := e.CreateSession("", "proj", "")
 	if err != nil {
 		t.Fatal(err)
@@ -506,7 +415,7 @@ func TestChatRunAndFollowUp(t *testing.T) {
 }
 
 func TestBusySession(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	s, _ := e.CreateSession("", "", "")
 	raw, err := e.StartChat(ChatRequest{SessionID: s.ID, Text: "SLOW"})
 	if err != nil {
@@ -520,7 +429,7 @@ func TestBusySession(t *testing.T) {
 	if m := waitDone(t, e, runIDOf(t, raw2)); m.Kind != KindManager {
 		t.Fatalf("expected a manager reply, got %s", m.Kind)
 	}
-	if _, err := e.startChat(ChatRequest{SessionID: s.ID, Text: "again"}, "", false); err != ErrBusy {
+	if _, err := e.startChat(ChatRequest{SessionID: s.ID, Text: "again"}, ""); err != ErrBusy {
 		t.Fatalf("expected ErrBusy, got %v", err)
 	}
 	id := runIDOf(t, raw)
@@ -532,84 +441,8 @@ func TestBusySession(t *testing.T) {
 	}
 }
 
-const wfMixed = `---
-name: Mixed
-vars:
-  greeting: hi
----
-Global rule.
-
-## Make
-- id: make
-- type: shell
-
-` + "```bash\necho {{vars.greeting}} > out.txt && cat out.txt && echo warn >&2\n```" + `
-
-## Broken
-- id: broken
-- type: shell
-- depends_on: []
-- retry: 1
-
-` + "```bash\necho nope >&2; exit 3\n```" + `
-
-## Ask agent
-- id: ask
-- depends_on: make
-
-Result was {{steps.make.output}}
-
-## On failure
-- id: rescue
-- depends_on: broken
-- if: failure
-
-Handle the failure.
-
-## Never
-- id: never
-- depends_on: broken
-
-Should be skipped.
-`
-
-func TestWorkflowRun(t *testing.T) {
-	e := newTestEngine(t, nil)
-	s, _ := e.CreateSession("", "", "")
-	raw, err := e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: wfMixed})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := waitDone(t, e, runIDOf(t, raw))
-	if r.Status != StatusFailed {
-		t.Fatalf("expected failed run (broken step), got %s", r.Status)
-	}
-	mk := stepByID(r, "make")
-	if mk.Status != StatusCompleted || mk.Output != "hi" {
-		t.Fatalf("make: %s %q", mk.Status, mk.Output)
-	}
-	cmd := mk.Items[0]
-	if cmd.Stdout != "hi\n" || cmd.Stderr != "warn\n" || cmd.Cwd == "" || cmd.ExitCode == nil || *cmd.ExitCode != 0 {
-		t.Fatalf("shell item: %+v", cmd)
-	}
-	br := stepByID(r, "broken")
-	if br.Status != StatusFailed || br.Attempt != 2 || br.ExitCode == nil || *br.ExitCode != 3 || !strings.Contains(br.Error, "nope") {
-		t.Fatalf("broken: status=%s attempt=%d err=%q", br.Status, br.Attempt, br.Error)
-	}
-	ask := stepByID(r, "ask")
-	if ask.Status != StatusCompleted || !strings.Contains(ask.Prompt, "Result was hi") || !strings.Contains(ask.Prompt, "Global rule.") {
-		t.Fatalf("ask: %s prompt=%q", ask.Status, ask.Prompt)
-	}
-	if st := stepByID(r, "rescue"); st.Status != StatusCompleted {
-		t.Fatalf("rescue should run on failure: %s", st.Status)
-	}
-	if st := stepByID(r, "never"); st.Status != StatusSkipped {
-		t.Fatalf("never should be skipped: %s", st.Status)
-	}
-}
-
 func TestPauseResumeAgent(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	s, _ := e.CreateSession("", "", "")
 	raw, _ := e.StartChat(ChatRequest{SessionID: s.ID, Text: "SLOW job"})
 	id := runIDOf(t, raw)
@@ -636,87 +469,32 @@ func TestPauseResumeAgent(t *testing.T) {
 	}
 }
 
-func TestStopShell(t *testing.T) {
-	e := newTestEngine(t, nil)
+func TestRetry(t *testing.T) {
+	e := newTestEngine(t)
 	s, _ := e.CreateSession("", "", "")
-	raw, err := e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: "## Sleep\n- type: shell\n\n```bash\necho start; sleep 30\n```\n\n## After\nnot reached\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := runIDOf(t, raw)
-	waitFor(t, "shell output", func() bool {
-		r := e.snapshot(id)
-		return len(r.Steps[0].Items) > 0 && strings.Contains(r.Steps[0].Items[0].Stdout, "start")
-	})
-	if err := e.Pause(id); err != nil {
-		t.Fatal(err)
-	}
-	waitFor(t, "shell paused", func() bool { return e.snapshot(id).Steps[0].Status == StatusPaused })
-	t0 := time.Now()
-	if err := e.Stop(id); err != nil {
-		t.Fatal(err)
-	}
-	r := waitDone(t, e, id)
-	if time.Since(t0) > 10*time.Second {
-		t.Fatalf("stop took too long: %s", time.Since(t0))
-	}
-	if r.Status != StatusStopped || r.Steps[0].Status != StatusStopped || r.Steps[1].Status != StatusStopped {
-		t.Fatalf("statuses: run=%s s0=%s s1=%s", r.Status, r.Steps[0].Status, r.Steps[1].Status)
-	}
-}
-
-func TestSubWorkflowAndRetry(t *testing.T) {
-	e := newTestEngine(t, map[string]string{
-		"child.md": "---\nname: Child\n---\n## Echo\n- type: shell\n\n```bash\necho child-{{vars.who}}\n```\n",
-	})
-	s, _ := e.CreateSession("", "", "")
-	src := "## Call\n```yaml\nid: call\nworkflow: child.md\nwith:\n  who: parent\n```\n\n## Use\nchild said {{steps.call.output}}\n"
-	raw, err := e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: src})
+	raw, err := e.StartChat(ChatRequest{SessionID: s.ID, Text: "do it"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := waitDone(t, e, runIDOf(t, raw))
-	if r.Status != StatusCompleted {
-		t.Fatalf("status %s err %s", r.Status, r.Error)
-	}
-	call := stepByID(r, "call")
-	if call.Output != "child-parent" || call.ChildRunID == "" {
-		t.Fatalf("call step: %q child=%q", call.Output, call.ChildRunID)
-	}
-	child := e.snapshot(call.ChildRunID)
-	if child.ParentRunID != r.ID || child.Status != StatusCompleted {
-		t.Fatalf("child run: %+v", child)
-	}
-	if !strings.Contains(stepByID(r, "use").Prompt, "child said child-parent") {
-		t.Fatal("template not rendered")
-	}
-	// Session only lists top-level runs.
-	e.mu.Lock()
-	n := len(e.sessions[s.ID].RunIDs)
-	e.mu.Unlock()
-	if n != 1 {
-		t.Fatalf("session has %d top-level runs", n)
-	}
-
 	raw, err = e.Retry(r.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	r2 := waitDone(t, e, runIDOf(t, raw))
-	if r2.RetryOf != r.ID || r2.Status != StatusCompleted {
-		t.Fatalf("retry: %+v", r2.Status)
+	if r2.RetryOf != r.ID || r2.Status != StatusCompleted || r2.Prompt != r.Prompt || len(r2.Steps) != 1 {
+		t.Fatalf("retry: %+v", r2)
 	}
 }
 
 func TestPersistenceMarksInterruptedRuns(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	s, _ := e.CreateSession("", "", "")
 	raw, _ := e.StartChat(ChatRequest{SessionID: s.ID, Text: "SLOW"})
 	id := runIDOf(t, raw)
 	waitFor(t, "running", func() bool { return e.snapshot(id).Status == StatusRunning })
 	e.Flush()
-	lib, _ := NewLibrary(e.cfg.DataDir+"/../workflows", nil)
-	e2, err := New(e.cfg, lib)
+	e2, err := New(e.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,160 +504,6 @@ func TestPersistenceMarksInterruptedRuns(t *testing.T) {
 	}
 	_ = e.Stop(id)
 	waitDone(t, e, id)
-}
-
-// A failed upstream step's output and error must reach a downstream agent,
-// unless the prompt already inlines {{steps.<id>.output}}.
-func TestFailedUpstreamOutputReachesAgent(t *testing.T) {
-	e := newTestEngine(t, nil)
-	s, _ := e.CreateSession("", "", "")
-	src := "## T\n- id: t\n- type: shell\n- continue_on_error: true\n\n```bash\necho PASS a; echo BAD b; echo boom >&2; exit 1\n```\n\n" +
-		"## R\n- id: r\n- if: always\n\nstatus {{steps.t.status}} exit {{steps.t.exit_code}}\n\n" +
-		"## R2\n- id: r2\n- depends_on: t\n- if: always\n\ninline {{steps.t.output}}\n"
-	raw, err := e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: src})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := waitDone(t, e, runIDOf(t, raw))
-	if r.Status != StatusCompleted {
-		t.Fatalf("run %s: %s", r.Status, r.Error)
-	}
-	tst := stepByID(r, "t")
-	if tst.Status != StatusFailed || !strings.Contains(tst.Output, "BAD b") {
-		t.Fatalf("failed step should keep output: %s %q", tst.Status, tst.Output)
-	}
-	p := stepByID(r, "r").Prompt
-	if !strings.Contains(p, "status failed exit 1") || !strings.Contains(p, "BAD b") || !strings.Contains(p, "boom") {
-		t.Fatalf("downstream prompt missing upstream result:\n%s", p)
-	}
-	p2 := stepByID(r, "r2").Prompt
-	if strings.Count(p2, "BAD b") != 1 {
-		t.Fatalf("inlined output should not be appended twice:\n%s", p2)
-	}
-}
-
-// A document without recognisable steps runs as one orchestrating agent that
-// reports its own steps through report_progress.
-func TestAgentModeOrchestrator(t *testing.T) {
-	e := newTestEngine(t, nil)
-	s, _ := e.CreateSession("", "", "")
-	raw, err := e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: "帮我看看目录里有什么，然后总结一下。\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := waitDone(t, e, runIDOf(t, raw))
-	if r.Status != StatusCompleted || r.Output != "ORCH DONE" {
-		t.Fatalf("status=%s output=%q err=%q", r.Status, r.Output, r.Error)
-	}
-	st := r.Steps[0]
-	if !st.Orchestrate || len(st.Plan) != 2 || st.Plan[0].Note != "3 个文件" || st.Plan[1].Status != "completed" {
-		t.Fatalf("plan: orchestrate=%v %+v", st.Orchestrate, st.Plan)
-	}
-	var plan *Item
-	for _, it := range st.Items {
-		if it.Kind == ItemTool {
-			t.Fatalf("report_progress calls must not show as tool items: %+v", it)
-		}
-		if it.ID == "progress" {
-			plan = it
-		}
-	}
-	if plan == nil || plan.Status != "completed" || len(plan.Plan) != 2 {
-		t.Fatalf("progress item: %+v", plan)
-	}
-	// Forcing step mode on the same text is an error-free single step... and
-	// forcing agent mode on a structured doc still orchestrates.
-	raw, err = e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: "## A\nx\n## B\ny\n", Mode: "agent"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r = waitDone(t, e, runIDOf(t, raw))
-	if len(r.Steps) != 1 || !r.Steps[0].Orchestrate || r.Mode != "agent" {
-		t.Fatalf("forced agent mode: %+v", r.Steps)
-	}
-	raw, err = e.Retry(r.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r2 := waitDone(t, e, runIDOf(t, raw)); len(r2.Steps) != 1 || !r2.Steps[0].Orchestrate {
-		t.Fatal("retry lost the requested mode")
-	}
-}
-
-func TestTemplateByTitle(t *testing.T) {
-	e := newTestEngine(t, nil)
-	s, _ := e.CreateSession("", "", "")
-	src := "## 1. 准备\n类型：命令\n\n```bash\necho PREP\n```\n\n## 2. 汇总\n上一步输出 {{steps.准备.结果}}，状态 {{steps.1.状态}}\n"
-	raw, err := e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: src})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := waitDone(t, e, runIDOf(t, raw))
-	p := r.Steps[1].Prompt
-	if !strings.Contains(p, "上一步输出 PREP，状态 completed") {
-		t.Fatalf("templates not rendered:\n%s", p)
-	}
-	if strings.Contains(p, "上游步骤的结果") {
-		t.Fatalf("inlined result appended again:\n%s", p)
-	}
-}
-
-func TestExampleSync(t *testing.T) {
-	dir := t.TempDir()
-	seed := fstest.MapFS{
-		"a.md": {Data: []byte("## A v2\nx\n")},
-		"b.md": {Data: []byte("## B v2\nx\n")},
-		"c.md": {Data: []byte("## C\nx\n")},
-	}
-	write := func(n, s string) { os.WriteFile(dir+"/"+n, []byte(s), 0o644) }
-	read := func(n string) string { b, _ := os.ReadFile(dir + "/" + n); return string(b) }
-
-	// Fresh library: everything is installed.
-	if _, err := NewLibrary(dir, seed); err != nil {
-		t.Fatal(err)
-	}
-	if read("a.md") != "## A v2\nx\n" || read("c.md") == "" {
-		t.Fatal("fresh install")
-	}
-	// The user edits a.md and deletes c.md; a new version ships.
-	write("a.md", "mine\n")
-	os.Remove(dir + "/c.md")
-	seed["a.md"] = &fstest.MapFile{Data: []byte("## A v3\nx\n")}
-	seed["b.md"] = &fstest.MapFile{Data: []byte("## B v3\nx\n")}
-	seed["d.md"] = &fstest.MapFile{Data: []byte("## D\nx\n")}
-	NewLibrary(dir, seed)
-	if read("a.md") != "mine\n" {
-		t.Fatal("edited example was overwritten")
-	}
-	if read("b.md") != "## B v3\nx\n" {
-		t.Fatal("unedited example not upgraded")
-	}
-	if _, err := os.Stat(dir + "/c.md"); err == nil {
-		t.Fatal("deleted example came back")
-	}
-	if read("d.md") == "" {
-		t.Fatal("new example not added")
-	}
-}
-
-func TestLegacyLibraryUpgrade(t *testing.T) {
-	dir := t.TempDir()
-	os.WriteFile(dir+"/.seeded", []byte("x"), 0o644)
-	os.WriteFile(dir+"/mine.md", []byte("## mine\nx\n"), 0o644)
-	// An old hello-world.md is recognised by its hash only if byte-identical.
-	old := "edited by user\n"
-	os.WriteFile(dir+"/hello-world.md", []byte(old), 0o644)
-	seed := fstest.MapFS{"hello-world.md": {Data: []byte("## new\nx\n")}, "project-health-check.md": {Data: []byte("## p\nx\n")}, "freeform-todo.md": {Data: []byte("free\n")}}
-	NewLibrary(dir, seed)
-	if b, _ := os.ReadFile(dir + "/hello-world.md"); string(b) != old {
-		t.Fatal("non-matching legacy file must stay")
-	}
-	if _, err := os.Stat(dir + "/project-health-check.md"); err == nil {
-		t.Fatal("a legacy example the user deleted must not come back")
-	}
-	if _, err := os.Stat(dir + "/freeform-todo.md"); err != nil {
-		t.Fatal("brand-new example should be added to a legacy library")
-	}
 }
 
 // Tasks in a session bound to a remote server run there, over the node connection.
@@ -904,8 +528,7 @@ func TestRemoteServer(t *testing.T) {
 	}()
 	defer func() { cancel(); <-agentDone }()
 
-	lib, _ := NewLibrary(dir+"/workflows", nil)
-	e, err := New(Config{DataDir: dir + "/data", Workspace: dir + "/hubws", Nodes: reg}, lib)
+	e, err := New(Config{DataDir: dir + "/data", Workspace: dir + "/hubws", Nodes: reg})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,30 +548,6 @@ func TestRemoteServer(t *testing.T) {
 	r := waitDone(t, e, runIDOf(t, raw))
 	if r.Status != StatusCompleted || r.Output != "DONE: hi remote" || r.NodeID != "box2" || r.Steps[0].Processes[0].Node != "box2" {
 		t.Fatalf("remote chat: %s %q node=%s", r.Status, r.Output, r.NodeID)
-	}
-	raw, err = e.StartWorkflow(WorkflowRequest{SessionID: s.ID, Source: "## 1. 在哪\n类型：命令\n\n```bash\npwd; echo 中文 >&2\n```\n"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r = waitDone(t, e, runIDOf(t, raw))
-	if r.Status != StatusCompleted || r.Output != remoteWS+"/proj" || r.Steps[0].Items[0].Stderr != "中文\n" {
-		t.Fatalf("remote shell: %s out=%q err=%q", r.Status, r.Output, r.Steps[0].Items[0].Stderr)
-	}
-	// Skills in the code on that server are found there and injected.
-	writeSkill(t, remoteWS+"/proj/ops/skills/disk", "disk-check", "看磁盘")
-	raw, err = e.StartChat(ChatRequest{SessionID: s.ID, Text: "用 $disk-check 看看"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	r = waitDone(t, e, runIDOf(t, raw))
-	if !strings.Contains(r.Output, "[roots disk] [skill disk-check]") {
-		t.Fatalf("remote skill run: %q", r.Output)
-	}
-	if scan, err := e.DiscoverSkills("box2", "proj"); err != nil || len(scan.Skills) != 1 || scan.Skills[0].Rel != "ops/skills/disk" {
-		t.Fatalf("remote discovery: %+v %v", scan, err)
-	}
-	if _, err := os.Stat(dir + "/box2data/skills-lib"); err == nil {
-		t.Fatal("nothing should be copied to the remote server")
 	}
 	// The connection drops in the middle of a task.
 	raw, _ = e.StartChat(ChatRequest{SessionID: s.ID, Text: "SLOW"})
@@ -992,13 +591,13 @@ func TestSSHKeyFormat(t *testing.T) {
 }
 
 func TestSettingsApplied(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	if v := e.GetSettings(); v.Codex.APIKeySet || v.Git.SSHKeySet {
 		t.Fatal("fresh settings should be empty")
 	}
 	nd, _ := e.cfg.Nodes.Get("")
-	if args := e.codexArgs(nd); len(args) != 0 {
-		t.Fatalf("no settings must mean no overrides: %v", args)
+	if args := strings.Join(e.codexArgs(nd), " "); args != `-c sandbox_mode="danger-full-access" -c approval_policy="never"` {
+		t.Fatalf("no settings must mean only the full-access overrides: %v", args)
 	}
 	url, key, model, net := "https://llm.example.com/v1", "sk-test-123456789", "gpt-x", true
 	user, tok, host, name, mail := "bot", "ghp_abcdef123456", "github.com", "AgentHost Bot", "bot@example.com"
@@ -1018,7 +617,7 @@ func TestSettingsApplied(t *testing.T) {
 		t.Fatalf("settings file mode %v", fi.Mode())
 	}
 	args := strings.Join(e.codexArgs(nd), " ")
-	for _, want := range []string{`model_provider="agenthost"`, `base_url="https://llm.example.com/v1"`, `env_key="AGENTHOST_CODEX_API_KEY"`, `model="gpt-x"`, "network_access=true"} {
+	for _, want := range []string{`model_provider="agenthost"`, `base_url="https://llm.example.com/v1"`, `env_key="AGENTHOST_CODEX_API_KEY"`, `model="gpt-x"`} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("codex args missing %s: %s", want, args)
 		}
@@ -1098,7 +697,7 @@ func TestFilesAndGit(t *testing.T) {
 	if err != nil {
 		t.Skip("git not installed")
 	}
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	s, _ := e.CreateSession("", "repo", "")
 	run := func(args ...string) {
 		cmd := exec.Command(gitBin, args...)
@@ -1151,22 +750,17 @@ func TestFilesAndGit(t *testing.T) {
 		t.Fatalf("relative %+v %v", v, err)
 	}
 
-	// Git sync is a chat run with network access and a fixed title.
+	// Git sync is a chat run with a fixed title.
 	raw, err := e.GitSync(s.ID, "只提交 a.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := waitDone(t, e, runIDOf(t, raw))
-	if !r.Network || r.Title != "同步到 Git 远端" || !strings.Contains(r.Prompt, "不要使用 --force") || !strings.Contains(r.Prompt, "只提交 a.txt") {
+	if r.Title != "同步到 Git 远端" || !strings.Contains(r.Prompt, "不要使用 --force") || !strings.Contains(r.Prompt, "只提交 a.txt") {
 		t.Fatalf("sync run %+v", r)
 	}
-	nd, _ := e.cfg.Nodes.Get("")
-	args := strings.Join(e.codexArgsFor(nd, r.Network, r.WritableRoots...), " ")
-	if !strings.Contains(args, "network_access=true") || !strings.Contains(args, `writable_roots=["`+s.Cwd+`/.git"]`) {
-		t.Fatalf("sync run must allow network and writing .git: %s", args)
-	}
-	if strings.Contains(strings.Join(e.codexArgs(nd), " "), "writable_roots") {
-		t.Fatal("ordinary runs must not get .git write access")
+	if r.Sandbox != CodexSandbox {
+		t.Fatalf("sync run sandbox %q", r.Sandbox)
 	}
 	notRepo, _ := e.CreateSession("", "plain", "")
 	if _, err := e.GitSync(notRepo.ID, ""); err == nil {

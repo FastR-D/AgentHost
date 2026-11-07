@@ -265,14 +265,19 @@ const codexKeyEnv = "AGENTHOST_CODEX_API_KEY"
 
 func tomlString(s string) string { return strconv.Quote(s) }
 
+// Codex always runs inside a dev container: the container is the isolation
+// boundary, so Codex gets full access and never asks for approval. (Its own
+// bubblewrap sandbox cannot work there anyway — no user namespaces.)
+const (
+	CodexSandbox  = "danger-full-access"
+	CodexApproval = "never"
+)
+
 // codexArgs are the `codex -c` overrides used on a node.
 func (e *Engine) codexArgs(nd node.Node) []string {
-	return e.codexArgsFor(nd, false)
-}
-
-func (e *Engine) codexArgsFor(nd node.Node, network bool, writable ...string) []string {
 	s := e.settings.get().Codex
 	args := append([]string{}, e.cfg.CodexArgs...)
+	args = append(args, "-c", "sandbox_mode="+tomlString(CodexSandbox), "-c", "approval_policy="+tomlString(CodexApproval))
 	if s.BaseURL != "" {
 		wire := firstNonEmpty(s.WireAPI, "responses")
 		prov := fmt.Sprintf(`{name="AgentHost", base_url=%s, wire_api=%s, requires_openai_auth=false`, tomlString(s.BaseURL), tomlString(wire))
@@ -287,16 +292,6 @@ func (e *Engine) codexArgsFor(nd node.Node, network bool, writable ...string) []
 	}
 	if s.ReasoningEffort != "" {
 		args = append(args, "-c", "model_reasoning_effort="+tomlString(s.ReasoningEffort))
-	}
-	if s.NetworkAccess || network {
-		args = append(args, "-c", "sandbox_workspace_write.network_access=true")
-	}
-	if len(writable) > 0 {
-		q := make([]string, len(writable))
-		for i, w := range writable {
-			q[i] = tomlString(w)
-		}
-		args = append(args, "-c", "sandbox_workspace_write.writable_roots=["+strings.Join(q, ", ")+"]")
 	}
 	return args
 }
@@ -474,7 +469,7 @@ func (e *Engine) TestCodex(nodeID string) (CheckResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	argv := append([]string{e.codexBin(nd), "exec"}, e.codexArgs(nd)...)
-	argv = append(argv, "--skip-git-repo-check", "--ephemeral", "--json", "--sandbox", "read-only", "只回复 ok 两个字母")
+	argv = append(argv, "--skip-git-repo-check", "--ephemeral", "--json", "--sandbox", CodexSandbox, "只回复 ok 两个字母")
 	code, out, err := e.runCheck(ctx, nd, node.Spec{Argv: argv, Dir: workspaceOf(nd), Env: e.extraEnv(nd)})
 	if err != nil && code == -1 && out == "" {
 		return CheckResult{OK: false, Output: err.Error()}, nil

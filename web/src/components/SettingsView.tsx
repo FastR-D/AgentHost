@@ -87,7 +87,7 @@ function CheckOutput({ res }: { res: CheckResult | null }) {
 export function SettingsView() {
   const defaultNode = useStore((s) => s.defaultNode);
   const [v, setV] = useState<SV | null>(null);
-  const [codex, setCodex] = useState({ baseUrl: "", wireApi: "", model: "", reasoningEffort: "", networkAccess: false });
+  const [codex, setCodex] = useState({ baseUrl: "", wireApi: "", model: "", reasoningEffort: "" });
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [git, setGit] = useState({ tokenUser: "", tokenHost: "", userName: "", userEmail: "" });
   const [token, setToken] = useState<string | null>(null);
@@ -106,7 +106,6 @@ export function SettingsView() {
       wireApi: s.codex.wireApi,
       model: s.codex.model,
       reasoningEffort: s.codex.reasoningEffort,
-      networkAccess: s.codex.networkAccess,
     });
     setGit({ tokenUser: s.git.tokenUser, tokenHost: s.git.tokenHost, userName: s.git.userName, userEmail: s.git.userEmail });
     setApiKey(null);
@@ -207,20 +206,6 @@ export function SettingsView() {
               </select>
             </Field>
           </div>
-          <label className="flex items-start gap-2 text-[13px]">
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4"
-              checked={codex.networkAccess}
-              onChange={(e) => setCodex({ ...codex, networkAccess: e.target.checked })}
-            />
-            <span>
-              允许 Agent 执行的命令访问网络
-              <span className="block text-[11.5px] text-faint">
-                拉代码、安装依赖时需要。关闭时 Codex 沙箱会拦截网络；“同步到 Git”任务总是允许联网。
-              </span>
-            </span>
-          </label>
           <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
             <NodeSelect value={testNode} onChange={setTestNode} />
             <button

@@ -11,12 +11,12 @@ import {
 } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowDown, ArrowUp, Bot, ClipboardList, FileText, Square, Workflow as WorkflowIcon, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, Bot, ClipboardList, FileText, Square, ChevronRight } from "lucide-react";
 import { useStore, navigate } from "../store";
 import type { Item } from "../types";
 import { ItemView, ReasoningView } from "./ItemView";
 import { Markdown, fixCjkEmphasis, mdComponents } from "./Markdown";
-import { ActivityLine, ResultBlock, RunHeader, StepCard, useRun } from "./StepCard";
+import { useRun } from "./RunControls";
 import { ActionChip, ManagerBusy, ManagerTag, OutcomeLine, ProcessLine, TaskDoneLine } from "./TaskBar";
 import type { MsgCustom } from "./messages";
 
@@ -53,32 +53,6 @@ const ReasoningPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
   );
 };
 
-const RunHeaderPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
-  const run = useRun(data.runId);
-  return run ? <RunHeader run={run} /> : null;
-};
-
-const StepPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
-  const run = useRun(data.runId);
-  const step = run?.steps.find((s) => s.id === data.stepId);
-  if (!run || !step) return null;
-  return (
-    <div className="mb-2">
-      <StepCard run={run} step={step} />
-    </div>
-  );
-};
-
-const ActivityPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
-  const run = useRun(data.runId);
-  return run ? <ActivityLine run={run} /> : null;
-};
-
-const ResultPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
-  const run = useRun(data.runId);
-  return run ? <ResultBlock run={run} /> : null;
-};
-
 const ProcessPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
   const run = useRun(data.runId);
   return run ? <ProcessLine run={run} /> : null;
@@ -104,34 +78,6 @@ const ManagerBusyPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
 const ActionPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
   const item = useItem(data.runId, data.stepId!, data.itemId!);
   return item ? <ActionChip item={item} /> : null;
-};
-
-const WorkflowRequestPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
-  const run = useRun(data.runId);
-  const [open, setOpen] = useState(false);
-  if (!run) return null;
-  return (
-    <div className="min-w-[260px]">
-      <div className="flex items-center gap-2">
-        <WorkflowIcon className="h-4 w-4 text-info" />
-        <span>
-          运行 Workflow <span className="font-medium">「{run.title}」</span>
-        </span>
-      </div>
-      <div className="mt-1 flex flex-wrap gap-1.5 text-[11.5px] text-muted">
-        {run.workflowFile ? <span className="chip font-mono">{run.workflowFile}</span> : <span className="chip">临时提交</span>}
-        <span className="chip">{run.steps.length} 个步骤</span>
-        {run.retryOf && <span className="chip">重新运行</span>}
-      </div>
-      {run.source && (
-        <button onClick={() => setOpen(!open)} className="mt-1 flex items-center gap-1 text-[12px] text-muted hover:text-fg">
-          <ChevronRight className={clsx("h-3 w-3 transition-transform", open && "rotate-90")} />
-          Markdown 源码
-        </button>
-      )}
-      {open && <pre className="term mt-1 max-h-72 overflow-auto rounded-lg bg-bg p-2 text-[11.5px]">{run.source}</pre>}
-    </div>
-  );
 };
 
 const NOTE_SEP = "\n\n---\n\n补充说明：";
@@ -178,10 +124,6 @@ const assistantParts = {
   data: {
     by_name: {
       reasoning: ReasoningPart,
-      "run-header": RunHeaderPart,
-      step: StepPart,
-      activity: ActivityPart,
-      result: ResultPart,
       process: ProcessPart,
       outcome: OutcomePart,
       manager: ManagerPart,
@@ -199,7 +141,7 @@ const UserMessage: FC = () => {
   return (
     <MessagePrimitive.Root className="flex justify-end py-3" id={custom ? `run-${custom.runId}` : undefined}>
       <div className="max-w-[85%] whitespace-pre-wrap break-words rounded-2xl bg-sunken px-4 py-2.5 text-[14px]">
-        <MessagePrimitive.Parts components={{ data: { by_name: { "workflow-request": WorkflowRequestPart, "task-request": TaskRequestPart } } }} />
+        <MessagePrimitive.Parts components={{ data: { by_name: { "task-request": TaskRequestPart } } }} />
       </div>
     </MessagePrimitive.Root>
   );

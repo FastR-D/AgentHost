@@ -2,21 +2,18 @@ package engine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
-	"time"
-
-	"agenthost/internal/workflow"
 )
 
-// execRun drives one run from queued to a terminal state.
+// execRun drives one run from queued to a terminal state: it waits for a
+// slot, then lets its Codex do the work.
 func (e *Engine) execRun(r *Run, rc *runCtl) {
 	defer close(rc.done)
 	defer e.st.closeLog(r.ID)
 
 	// Manager replies never wait for a slot: they are how you check on a busy server.
-	if rc.topLvl && r.Kind != KindManager {
+	if r.Kind != KindManager {
 		e.logf(r.ID, "", "host", "info", "任务已排队，等待执行槽位（最多同时运行 %d 个任务）", e.cfg.MaxConcurrentRuns)
 		select {
 		case e.slots <- struct{}{}:
@@ -36,91 +33,54 @@ func (e *Engine) execRun(r *Run, rc *runCtl) {
 	}
 
 	e.mu.Lock()
+	st := r.Steps[0]
 	r.StartedAt = now()
 	if !rc.paused {
 		r.Status = StatusRunning
 	}
+	st.Status, st.StartedAt = StatusRunning, now()
+	ctl := &stepCtl{pauseCh: make(chan struct{}, 1), resumeCh: make(chan struct{}, 1)}
+	rc.step = ctl
+	r.Activity = e.runActivity(r)
 	e.touchRun(r)
 	e.touchSession(e.sessions[r.SessionID])
 	e.mu.Unlock()
-	if r.Kind == KindWorkflow {
-		e.logf(r.ID, "", "host", "info", "开始执行 workflow「%s」，共 %d 个步骤，工作目录 %s", r.Title, len(r.Steps), r.Cwd)
-	} else if r.Kind == KindManager {
+	if r.Kind == KindManager {
 		e.logf(r.ID, "", "host", "info", "管家开始回答（关于任务 %s）", r.Target)
 	} else {
-		e.logf(r.ID, "", "host", "info", "开始执行对话任务，工作目录 %s", r.Cwd)
+		e.logf(r.ID, "", "host", "info", "开始执行任务，工作目录 %s", r.Cwd)
 	}
 
-	maxPar := 1
-	if r.Workflow != nil && r.Workflow.MaxParallel > 0 {
-		maxPar = r.Workflow.MaxParallel
-	}
+	out, err := e.runAgent(rc.ctx, r, rc, st, ctl)
 
-	for {
-		e.mu.Lock()
-		stopping := rc.ctx.Err() != nil
-		running, changed := 0, false
-		for _, st := range r.Steps {
-			if st.Status == StatusRunning || st.Status == StatusPaused {
-				running++
-			}
-		}
-		byID := map[string]*Step{}
-		for _, st := range r.Steps {
-			byID[st.ID] = st
-		}
-		for _, st := range r.Steps {
-			if st.Status != StatusPending {
-				continue
-			}
-			if stopping {
-				st.Status = StatusStopped
-				st.Error = "任务已停止"
-				changed = true
-				continue
-			}
-			ready, run, reason := evalDeps(st, byID)
-			if !ready {
-				continue
-			}
-			if !run {
-				st.Status = StatusSkipped
-				st.Error = reason
-				st.EndedAt = now()
-				changed = true
-				continue
-			}
-			if rc.paused || running >= maxPar {
-				continue
-			}
-			running++
-			changed = true
-			st.Status = StatusRunning
-			st.StartedAt = now()
-			ctl := &stepCtl{pauseCh: make(chan struct{}, 1), resumeCh: make(chan struct{}, 1)}
-			rc.steps[st.ID] = ctl
-			go e.execStep(r, rc, st, ctl)
-		}
-		allDone := true
-		for _, st := range r.Steps {
-			if !st.Status.Terminal() {
-				allDone = false
-			}
-		}
-		if changed {
-			r.Activity = e.runActivity(r)
-			e.touchRun(r)
-			e.publishSessionOf(r)
-		}
-		e.mu.Unlock()
-		if allDone {
-			break
-		}
-		if changed {
-			continue
-		}
-		<-rc.wake
+	e.mu.Lock()
+	st.EndedAt = now()
+	st.Activity = ""
+	switch {
+	case rc.ctx.Err() != nil:
+		st.Status, st.Error = StatusStopped, "已停止"
+	case err != nil:
+		st.Status, st.Error, st.Output = StatusFailed, err.Error(), out
+	default:
+		st.Status, st.Output = StatusCompleted, out
 	}
+	for _, it := range st.Items {
+		if it.Status == "running" {
+			if st.Status == StatusCompleted {
+				it.Status = "completed"
+			} else {
+				it.Status = "stopped"
+			}
+			e.hub.Publish("item", itemEvent(r, st, it))
+		}
+	}
+	for _, a := range st.Agents {
+		if a.Status == "running" {
+			a.Status, a.EndedAt, a.Activity = "stopped", st.EndedAt, ""
+		}
+	}
+	rc.step = nil
+	e.mu.Unlock()
 	e.finishRun(r, rc)
 }
 
@@ -141,101 +101,32 @@ func (e *Engine) failRunEarly(r *Run, rc *runCtl, msg string) {
 	e.Flush()
 }
 
-// evalDeps reports whether all dependencies are finished and, if so,
-// whether the step's condition says it should run.
-func evalDeps(st *Step, byID map[string]*Step) (ready, run bool, reason string) {
-	allOK, anyFailed := true, false
-	for _, d := range st.DependsOn {
-		dep := byID[d]
-		if dep == nil {
-			continue
-		}
-		if !dep.Status.Terminal() {
-			return false, false, ""
-		}
-		switch dep.Status {
-		case StatusCompleted:
-		case StatusFailed:
-			if !dep.ContinueOnError {
-				anyFailed = true
-				allOK = false
-			}
-		default:
-			allOK = false
-		}
-	}
-	switch st.If {
-	case workflow.IfAlways:
-		return true, true, ""
-	case workflow.IfFailure:
-		if anyFailed {
-			return true, true, ""
-		}
-		return true, false, "跳过：仅在依赖步骤失败时执行"
-	default:
-		if allOK {
-			return true, true, ""
-		}
-		return true, false, "跳过：依赖步骤未成功完成"
-	}
-}
-
 func (e *Engine) finishRun(r *Run, rc *runCtl) {
 	e.mu.Lock()
-	failed, stopped := false, rc.ctx.Err() != nil && rc.stopped
-	if rc.ctx.Err() != nil {
-		stopped = true
-	}
-	var firstErr string
-	for _, st := range r.Steps {
-		if st.Status == StatusPending {
-			st.Status = StatusStopped
-		}
-		if st.Status == StatusFailed && !st.ContinueOnError {
-			failed = true
-			if firstErr == "" {
-				firstErr = fmt.Sprintf("步骤「%s」失败：%s", st.Title, st.Error)
-			}
-		}
-		if st.Status == StatusStopped {
-			stopped = true
-		}
+	st := r.Steps[0]
+	if st.Status == StatusPending {
+		st.Status = StatusStopped
 	}
 	switch {
-	case stopped:
-		r.Status = StatusStopped
-		r.Error = "任务已被停止"
-	case failed:
-		r.Status = StatusFailed
-		r.Error = firstErr
+	case rc.ctx.Err() != nil || st.Status == StatusStopped:
+		r.Status, r.Error = StatusStopped, "任务已被停止"
+	case st.Status == StatusFailed:
+		r.Status, r.Error = StatusFailed, st.Error
 	default:
 		r.Status = StatusCompleted
 	}
-	// Final result: output of the last step (document order) that produced one.
-	for i := len(r.Steps) - 1; i >= 0; i-- {
-		st := r.Steps[i]
-		if st.Status == StatusCompleted && strings.TrimSpace(st.Output) != "" {
-			r.Output = st.Output
-			break
-		}
+	if strings.TrimSpace(st.Output) != "" {
+		r.Output = st.Output
 	}
 	r.EndedAt = now()
 	r.Activity = ""
-	// Follow-up chat continues the Codex thread of the most recent agent step.
-	if s := e.sessions[r.SessionID]; s != nil && r.ParentRunID == "" {
-		var last *Step
-		for _, st := range r.Steps {
-			if st.Type == workflow.TypeAgent && st.ThreadID != "" && st.StartedAt != nil {
-				if last == nil || st.StartedAt.After(*last.StartedAt) {
-					last = st
-				}
-			}
-		}
-		if last != nil {
+	// Follow-up chat continues this Codex thread.
+	if s := e.sessions[r.SessionID]; s != nil {
+		if st.ThreadID != "" {
 			if r.Kind == KindManager {
-				s.ManagerThreadID = last.ThreadID
+				s.ManagerThreadID = st.ThreadID
 			} else {
-				s.ThreadID = last.ThreadID
+				s.ThreadID = st.ThreadID
 			}
 		}
 		e.touchSession(s)
@@ -252,20 +143,14 @@ func (e *Engine) runActivity(r *Run) string {
 	if rc := e.ctls[r.ID]; rc != nil && rc.paused {
 		return "已暂停"
 	}
-	var parts []string
-	for _, st := range r.Steps {
-		if st.Status == StatusRunning || st.Status == StatusPaused {
-			a := st.Activity
-			if a == "" {
-				a = "执行中"
-			}
-			if r.Kind == KindWorkflow {
-				a = st.Title + " · " + a
-			}
-			parts = append(parts, a)
-		}
+	st := r.Steps[0]
+	if st.Status != StatusRunning && st.Status != StatusPaused {
+		return ""
 	}
-	return truncate(strings.Join(parts, "；"), 300)
+	if st.Activity == "" {
+		return "执行中"
+	}
+	return truncate(st.Activity, 300)
 }
 
 // setStepActivity updates "what is happening now". Call with e.mu held.
@@ -281,99 +166,9 @@ func (e *Engine) setStepActivity(r *Run, st *Step, a string) {
 
 // publishSessionOf pushes the sidebar row (status + activity) of a run's session. Call with e.mu held.
 func (e *Engine) publishSessionOf(r *Run) {
-	if s := e.sessions[r.SessionID]; s != nil && r.ParentRunID == "" {
+	if s := e.sessions[r.SessionID]; s != nil {
 		e.hub.Publish("session", e.sessionInfo(s))
 	}
-}
-
-func (e *Engine) execStep(r *Run, rc *runCtl, st *Step, ctl *stepCtl) {
-	defer e.wake(rc)
-	e.logf(r.ID, st.ID, "host", "info", "开始步骤「%s」（%s）", st.Title, st.Type)
-	var out string
-	var err error
-	for attempt := 1; attempt <= st.MaxAttempts; attempt++ {
-		e.mu.Lock()
-		st.Attempt = attempt
-		st.Error = ""
-		if attempt > 1 {
-			st.Status = StatusRunning
-			e.addItemLocked(r, st, &Item{ID: fmt.Sprintf("retry-%d", attempt), Kind: ItemNotice, Status: "completed",
-				Title: fmt.Sprintf("第 %d 次尝试（共 %d 次）", attempt, st.MaxAttempts), Text: "上一次失败：" + truncate(errText(err), 500), StartedAt: now()})
-		}
-		e.touchRun(r)
-		e.mu.Unlock()
-
-		ctx := rc.ctx
-		var cancel context.CancelFunc = func() {}
-		if st.def != nil && st.def.Timeout > 0 {
-			ctx, cancel = context.WithTimeout(ctx, st.def.Timeout)
-		}
-		switch st.Type {
-		case workflow.TypeShell:
-			out, err = e.runShell(ctx, r, rc, st, ctl)
-		case workflow.TypeWorkflow:
-			out, err = e.runSubWorkflow(ctx, r, rc, st, ctl)
-		default:
-			out, err = e.runAgent(ctx, r, rc, st, ctl, attempt, err)
-		}
-		timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded) && rc.ctx.Err() == nil
-		cancel()
-		if timedOut {
-			err = fmt.Errorf("超时（%s）", st.def.Timeout)
-		}
-		if err == nil || rc.ctx.Err() != nil {
-			break
-		}
-		e.logf(r.ID, st.ID, "host", "warn", "步骤「%s」第 %d 次执行失败：%v", st.Title, attempt, err)
-	}
-
-	e.mu.Lock()
-	st.EndedAt = now()
-	st.Activity = ""
-	switch {
-	case rc.ctx.Err() != nil:
-		st.Status = StatusStopped
-		st.Error = "已停止"
-	case err != nil:
-		st.Status = StatusFailed
-		st.Error = err.Error()
-		st.Output = out // partial output (e.g. stdout of a failed command) is still useful downstream
-	default:
-		st.Status = StatusCompleted
-		st.Output = out
-	}
-	for _, it := range st.Items {
-		if it.Status == "running" {
-			if st.Status == StatusCompleted {
-				it.Status = "completed"
-			} else {
-				it.Status = "stopped"
-			}
-			e.hub.Publish("item", itemEvent(r, st, it))
-		}
-	}
-	for _, a := range st.Agents {
-		if a.Status == "running" {
-			a.Status, a.EndedAt, a.Activity = "stopped", st.EndedAt, ""
-		}
-	}
-	delete(rc.steps, st.ID)
-	r.Activity = e.runActivity(r)
-	e.touchRun(r)
-	status, serr := st.Status, st.Error
-	e.mu.Unlock()
-	if serr != "" {
-		e.logf(r.ID, st.ID, "host", "info", "步骤「%s」结束：%s（%s）", st.Title, status, serr)
-	} else {
-		e.logf(r.ID, st.ID, "host", "info", "步骤「%s」结束：%s", st.Title, status)
-	}
-}
-
-func errText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 // ---------------------------------------------------------------- items (call with e.mu held)
@@ -485,12 +280,5 @@ func waitResume(ctx context.Context, ctl *stepCtl) error {
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()
-	}
-}
-
-func sleepCtx(ctx context.Context, d time.Duration) {
-	select {
-	case <-ctx.Done():
-	case <-time.After(d):
 	}
 }

@@ -46,7 +46,7 @@ export type ItemKind =
   | "agent"
   | "error"
   | "notice"
-  | "skills"
+  | "skills" // older runs only
   | "other";
 
 export interface Item {
@@ -89,21 +89,13 @@ export interface Process {
   error?: string;
 }
 
+/** The Codex working on a run (a run has exactly one). */
 export interface Step {
   id: string;
   title: string;
-  type: "agent" | "shell" | "workflow";
-  dependsOn: string[];
-  if: string;
-  continueOnError?: boolean;
   status: Status;
-  attempt: number;
-  maxAttempts: number;
   cwd: string;
   prompt?: string;
-  run?: string;
-  workflow?: string;
-  childRunId?: string;
   threadId?: string;
   turnId?: string;
   processes?: Process[];
@@ -111,10 +103,9 @@ export interface Step {
   itemCount?: number;
   output?: string;
   error?: string;
-  exitCode?: number | null;
   diff?: string;
+  /** Steps Codex reported with report_progress. */
   plan?: PlanEntry[];
-  orchestrate?: boolean;
   usage?: TokenUsage;
   /** Codex sub-agents working on parts of this step. */
   agents?: SubAgent[];
@@ -139,44 +130,6 @@ export interface TokenUsage {
   modelContextWindow?: number | null;
 }
 
-export interface WorkflowDef {
-  name: string;
-  description?: string;
-  instructions?: string;
-  cwd?: string;
-  model?: string;
-  sandbox?: string;
-  maxParallel: number;
-  vars?: Record<string, string>;
-  mode: "steps" | "agent";
-  modeReason?: string;
-  detectedSteps: number;
-  contextSections?: string[];
-  steps: {
-    id: string;
-    number: number;
-    title: string;
-    type: string;
-    dependsOn: string[];
-    autoDeps?: boolean;
-    parallel?: boolean;
-    orchestrate?: boolean;
-    if: string;
-    retry?: number;
-    timeout?: number;
-    continueOnError?: boolean;
-    cwd?: string;
-    model?: string;
-    sandbox?: string;
-    session?: string;
-    prompt?: string;
-    run?: string;
-    workflow?: string;
-    with?: Record<string, string>;
-    line: number;
-  }[];
-}
-
 export interface Progress {
   done: number;
   total: number;
@@ -187,20 +140,14 @@ export interface Progress {
 export interface Run {
   id: string;
   sessionId: string;
-  parentRunId?: string;
-  parentStepId?: string;
   /** "manager": a reply from the task's manager while the task runs. */
-  kind: "chat" | "workflow" | "manager";
+  kind: "chat" | "manager";
   title: string;
   prompt: string;
   /** Manager replies: the task run asked about. */
   target?: string;
   /** How many Codex work on the task at once (sub-agents); absent = one. */
   parallel?: number;
-  source?: string;
-  workflowFile?: string;
-  workflow?: WorkflowDef;
-  mode?: string;
   /** Task from the library this run follows. */
   task?: string;
   /** Or the Markdown file on the server it follows. */
@@ -208,8 +155,6 @@ export interface Run {
   taskTitle?: string;
   /** What the user added to the task. */
   note?: string;
-  network?: boolean;
-  vars?: Record<string, string>;
   cwd: string;
   nodeId: string;
   model?: string;
@@ -236,31 +181,12 @@ export interface LogEntry {
   text: string;
 }
 
-export interface WorkflowInfo {
-  name: string;
-  title: string;
-  description?: string;
-  steps: number;
-  error?: string;
-  updatedAt: string;
-  size: number;
-}
-
-export interface ParseResult {
-  workflow?: WorkflowDef;
-  layers?: string[][];
-  warnings?: string[];
-  error?: string;
-  line?: number;
-}
-
 export interface Info {
   version: string;
   codexBin: string;
   codexVersion: string;
   workspace: string;
   dataDir: string;
-  workflowsDir: string;
   defaultModel: string;
   defaultSandbox: string;
   approvalPolicy: string;
@@ -272,8 +198,6 @@ export const isActive = (s?: Status | "") => s === "queued" || s === "running" |
 export const isTerminal = (s?: Status | "") =>
   s === "completed" || s === "failed" || s === "stopped" || s === "skipped";
 
-export type Mode = "" | "steps" | "agent";
-
 /** A saved task: plain Markdown, plus where it usually runs. */
 export interface Task {
   name: string;
@@ -283,24 +207,6 @@ export interface Task {
   parallel?: number;
   body: string;
   updatedAt: string;
-}
-
-/** A skill found in the code (a folder with SKILL.md). */
-export interface RepoSkill {
-  name: string;
-  description?: string;
-  path: string;
-  /** Folder relative to the scanned root. */
-  rel: string;
-  /** Codex loads it by itself (.agents/skills, .codex/skills). */
-  native?: boolean;
-}
-
-export interface SkillScan {
-  root: string;
-  skills: RepoSkill[];
-  truncated?: boolean;
-  error?: string;
 }
 
 export interface NodeInfo {

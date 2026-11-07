@@ -11,12 +11,11 @@ import (
 
 	"agenthost/internal/codex"
 	"agenthost/internal/node"
-	"agenthost/internal/workflow"
 )
 
-// runAgent runs an agent step as one or more Codex turns. Pausing interrupts
+// runAgent runs the run's Codex as one or more turns. Pausing interrupts
 // the current turn; resuming starts a new turn on the same Codex thread.
-func (e *Engine) runAgent(ctx context.Context, r *Run, rc *runCtl, st *Step, ctl *stepCtl, attempt int, prevErr error) (string, error) {
+func (e *Engine) runAgent(ctx context.Context, r *Run, rc *runCtl, st *Step, ctl *stepCtl) (string, error) {
 	e.mu.Lock()
 	ctl.pause = func() {
 		select {
@@ -30,30 +29,16 @@ func (e *Engine) runAgent(ctx context.Context, r *Run, rc *runCtl, st *Step, ctl
 		default:
 		}
 	}
+	prompt := st.Prompt
+	if r.Kind == KindManager {
+		prompt = e.managerPrompt(r, r.Prompt) // the task's state as of now
+		st.Prompt = prompt
+	}
 	threadID := st.ThreadID
-	var prompt string
-	if attempt > 1 && threadID != "" {
-		prompt = fmt.Sprintf("上一次尝试失败（%s）。请重新尝试完成上面的任务。", truncate(errText(prevErr), 500))
-	} else {
-		switch r.Kind {
-		case KindWorkflow:
-			prompt = e.buildAgentPrompt(r, st)
-			st.Prompt = prompt
-		case KindManager:
-			prompt = e.managerPrompt(r, r.Prompt) // the task's state as of now
-			st.Prompt = prompt
-		default:
-			prompt = st.Prompt
-		}
-		if threadID == "" {
-			threadID = e.initialThread(r, st)
-		}
+	if threadID == "" {
+		threadID = e.initialThread(r)
 	}
-	model, sandbox := r.Model, r.Sandbox
-	if st.def != nil {
-		model = firstNonEmpty(st.def.Model, model)
-		sandbox = firstNonEmpty(st.def.Sandbox, sandbox)
-	}
+	model := r.Model
 	paused := rc.paused
 	e.touchRun(r)
 	e.mu.Unlock()
@@ -71,9 +56,9 @@ func (e *Engine) runAgent(ctx context.Context, r *Run, rc *runCtl, st *Step, ctl
 		e.setStepStatus(r, st, StatusRunning, "")
 	}
 
-	first := attempt == 1
+	first := true
 	for {
-		out, err := e.agentTurn(ctx, r, st, ctl, threadID, prompt, model, sandbox, first)
+		out, err := e.agentTurn(ctx, r, st, ctl, threadID, prompt, model, first)
 		first = false // a resumed turn continues with what Codex already read
 		if !errors.Is(err, errPaused) {
 			return out, err
@@ -102,85 +87,17 @@ func (e *Engine) setStepStatus(r *Run, st *Step, s Status, activity string) {
 	e.publishSessionOf(r)
 }
 
-// initialThread picks the Codex thread an agent step continues. Call with e.mu held.
-func (e *Engine) initialThread(r *Run, st *Step) string {
-	if r.Kind == KindChat || r.Kind == KindManager {
-		if s := e.sessions[r.SessionID]; s != nil {
-			if r.Kind == KindManager {
-				return s.ManagerThreadID
-			}
-			return s.ThreadID
-		}
+// initialThread is the Codex thread a run continues: the session's (the
+// manager has its own). Call with e.mu held.
+func (e *Engine) initialThread(r *Run) string {
+	s := e.sessions[r.SessionID]
+	if s == nil {
 		return ""
 	}
-	if st.def != nil && st.def.Session != "" {
-		for _, other := range r.Steps {
-			if other.ID == st.def.Session {
-				return other.ThreadID
-			}
-		}
+	if r.Kind == KindManager {
+		return s.ManagerThreadID
 	}
-	return ""
-}
-
-// lookup resolves {{...}} template paths. Call with e.mu held.
-func (e *Engine) lookup(r *Run) func(string) (string, bool) {
-	return func(p string) (string, bool) {
-		parts := strings.SplitN(p, ".", 3)
-		switch parts[0] {
-		case "vars", "inputs", "env":
-			if len(parts) >= 2 {
-				v, ok := r.Vars[strings.Join(parts[1:], ".")]
-				return v, ok
-			}
-		case "steps", "步骤":
-			// steps.<id | 编号 | 标题>.<field>; the reference may itself contain dots.
-			if len(parts) < 3 {
-				return "", false
-			}
-			rest := strings.Join(parts[1:], ".")
-			i := strings.LastIndex(rest, ".")
-			ref, field := rest[:i], rest[i+1:]
-			st := e.findStepRef(r, ref)
-			if st == nil {
-				return "", false
-			}
-			switch field {
-			case "output", "result", "结果", "输出":
-				return st.Output, true
-			case "status", "状态":
-				return string(st.Status), true
-			case "error", "错误":
-				return st.Error, true
-			case "exit_code", "退出码":
-				if st.ExitCode != nil {
-					return fmt.Sprint(*st.ExitCode), true
-				}
-				return "", true
-			}
-		case "run":
-			if len(parts) == 2 {
-				switch parts[1] {
-				case "id":
-					return r.ID, true
-				case "cwd":
-					return r.Cwd, true
-				case "title":
-					return r.Title, true
-				}
-			}
-		case "workflow":
-			if len(parts) == 2 && parts[1] == "name" {
-				return r.Title, true
-			}
-		case "workspace":
-			if nd, err := e.cfg.Nodes.Get(r.NodeID); err == nil {
-				return workspaceOf(nd), true
-			}
-			return "", false
-		}
-		return "", false
-	}
+	return s.ThreadID
 }
 
 // codexBin is the Codex executable on a node.
@@ -191,112 +108,15 @@ func (e *Engine) codexBin(nd node.Node) string {
 	return "codex"
 }
 
-// findStepRef resolves a step by id, number or title. Call with e.mu held.
-func (e *Engine) findStepRef(r *Run, ref string) *Step {
-	for _, st := range r.Steps {
-		if st.ID == ref {
-			return st
-		}
-	}
-	if r.Workflow == nil {
-		return nil
-	}
-	d, err := r.Workflow.ResolveRef(ref)
-	if err != nil {
-		return nil
-	}
-	for _, st := range r.Steps {
-		if st.ID == d.ID {
-			return st
-		}
-	}
-	return nil
-}
-
-// buildAgentPrompt assembles the prompt for a workflow agent step. Call with e.mu held.
-func (e *Engine) buildAgentPrompt(r *Run, st *Step) string {
-	look := e.lookup(r)
-	if st.def != nil && st.def.Orchestrate {
-		return orchestratorPrompt + workflow.Render(st.def.Prompt, look) + "\n"
-	}
-	var b strings.Builder
-	if r.Workflow != nil && r.Workflow.Instructions != "" {
-		fmt.Fprintf(&b, "# Workflow「%s」的总体说明\n\n%s\n\n", r.Title, workflow.Render(r.Workflow.Instructions, look))
-	}
-	raw := st.Prompt
-	if st.def != nil {
-		raw = st.def.Prompt
-	}
-	body := workflow.Render(raw, look)
-	fmt.Fprintf(&b, "# 当前步骤：%s\n\n%s\n", st.Title, body)
-	var deps []string
-	for _, d := range st.DependsOn {
-		for _, dep := range r.Steps {
-			if dep.ID != d || (strings.TrimSpace(dep.Output) == "" && dep.Error == "") {
-				continue
-			}
-			res := strings.TrimSpace(dep.Output)
-			// Skip results the author already placed in the prompt with a template.
-			if res != "" && strings.Contains(body, res) {
-				continue
-			}
-			if res == "" {
-				res = "（无输出）"
-			}
-			if dep.Error != "" && dep.Status != StatusCompleted {
-				res += "\n\n错误：" + dep.Error
-			}
-			deps = append(deps, fmt.Sprintf("## 「%s」（%s）\n\n%s", dep.Title, statusText(dep.Status), truncate(res, 6000)))
-		}
-	}
-	if len(deps) > 0 {
-		fmt.Fprintf(&b, "\n# 上游步骤的结果\n\n%s\n", strings.Join(deps, "\n\n"))
-	}
-	b.WriteString("\n---\n你正在由 AgentHost 按 workflow 调度执行这个步骤。完成后，请在最后一条回复中直接给出本步骤的结果。\n")
-	return b.String()
-}
-
-func statusText(s Status) string {
-	switch s {
-	case StatusCompleted:
-		return "已完成"
-	case StatusFailed:
-		return "失败"
-	case StatusSkipped:
-		return "已跳过"
-	case StatusStopped:
-		return "已停止"
-	}
-	return string(s)
-}
-
-const orchestratorPrompt = `# 你的任务
-
-下面是一份由用户编写的 workflow 文档，可能比较口语化。请通读全文，把要做的事拆成清晰的步骤（尽量沿用文档里已有的划分和叫法，一般 3–8 步），然后依次执行完。
-
-## 进度汇报（必须）
-
-AgentHost 会把你的步骤显示给用户看，所以请用 report_progress 工具汇报：
-- 开始动手前调用一次，列出全部步骤，状态都是 pending；
-- 每个步骤开始时把它标为 running，结束时标为 completed（失败标 failed，不需要做的标 skipped），在 note 里用一句话写结果或原因；
-- 每次都传完整的步骤列表；执行中需要增删或调整步骤时，直接改列表。
-
-全部完成后，用最后一条回复给出整体结果。
-
-# workflow 文档
-
-`
-
 type turnResult struct {
 	status string
 	err    string
 }
 
 // agentTurn starts `codex app-server`, opens or resumes a thread, runs one
-// turn and streams everything into the step timeline.
-// first is the run's first turn: it reports the injected skills and attaches
-// the ones the task names.
-func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, threadID, prompt, model, sandbox string, first bool) (string, error) {
+// turn and streams everything into the step timeline. first is the run's
+// first turn (later ones continue after a pause).
+func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, threadID, prompt, model string, first bool) (string, error) {
 	turnDone := make(chan turnResult, 1)
 	var idMu sync.Mutex
 	mainThread, mainTurn := "", ""
@@ -333,7 +153,7 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 	if err != nil {
 		return "", err
 	}
-	args := e.codexArgsFor(nd, r.Network, r.WritableRoots...)
+	args := e.codexArgs(nd)
 	if n := r.Parallel; n > 1 && r.Kind != KindManager {
 		// Codex's own sub-agents; the limit counts them, not the coordinating agent.
 		args = append(args, "-c", "features.multi_agent=true")
@@ -368,17 +188,11 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 		e.logf(r.ID, st.ID, "host", "info", "Codex CLI 进程已退出（pid %d）", proc.Pid)
 	}()
 
-	params := map[string]any{"cwd": st.Cwd, "approvalPolicy": e.cfg.ApprovalPolicy, "sandbox": sandbox}
+	params := map[string]any{"cwd": st.Cwd, "approvalPolicy": CodexApproval, "sandbox": CodexSandbox}
 	if model != "" {
 		params["model"] = model
 	}
 	manager := r.Kind == KindManager
-	// Skills come from the task's own code and are given to this process only.
-	inj := &injected{known: map[string]string{}}
-	if !manager {
-		e.setStepActivity2(r, st, "查找技能")
-		inj = e.injectSkills(ctx, r, st, nd, client)
-	}
 	// New threads get the progress tool (the manager: its own tools); Codex keeps them for later turns.
 	startParams := map[string]any{"dynamicTools": []any{progressTool}, "developerInstructions": progressGuide}
 	if manager {
@@ -423,18 +237,7 @@ func (e *Engine) agentTurn(ctx context.Context, r *Run, st *Step, ctl *stepCtl, 
 	e.touchRun(r)
 	e.mu.Unlock()
 
-	input := []map[string]any{}
-	if first && !manager {
-		// "$name" in the task asks for a skill explicitly.
-		items, names := mentionedSkills(prompt, inj.known)
-		input = append(input, items...)
-		if it := skillsNotice(inj, names); it != nil {
-			e.mu.Lock()
-			e.addItemLocked(r, st, it)
-			e.mu.Unlock()
-		}
-	}
-	input = append(input, map[string]any{"type": "text", "text": prompt, "text_elements": []any{}})
+	input := []map[string]any{{"type": "text", "text": prompt, "text_elements": []any{}}}
 	if first && !manager && r.Parallel > 1 {
 		input = append(input, map[string]any{"type": "text", "text": parallelHint(r.Parallel), "text_elements": []any{}})
 	}

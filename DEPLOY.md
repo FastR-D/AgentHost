@@ -138,7 +138,6 @@ Web 控制台：
 | `AGENTHOST_NODE_TOKEN` | 必填 | 控制台发的节点令牌 |
 | `AGENTHOST_NODE_NAME` | 主机名 | 显示在服务器列表的名字 |
 | `AGENTHOST_WORKSPACE` | `./workspace` | 任务工作目录 |
-| `AGENTHOST_SANDBOX` | `workspace-write` | 沙箱：`read-only`/`workspace-write`/`danger-full-access` |
 
 ## 常见问题
 

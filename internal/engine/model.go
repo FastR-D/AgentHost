@@ -3,8 +3,6 @@ package engine
 import (
 	"encoding/json"
 	"time"
-
-	"agenthost/internal/workflow"
 )
 
 type Status string
@@ -51,48 +49,39 @@ type Session struct {
 }
 
 const (
-	KindChat     = "chat"
-	KindWorkflow = "workflow"
+	KindChat = "chat"
 	// KindManager is a message to the manager while a task runs: a separate
 	// read-only Codex that reports progress and passes instructions on.
 	KindManager = "manager"
 )
 
-// Run is one task: a chat turn or a workflow execution.
+// Run is one task: the text (a message, or a task's Markdown) handed to one
+// Codex, which does the work. AgentHost does not plan or orchestrate it.
 type Run struct {
-	ID            string             `json:"id"`
-	SessionID     string             `json:"sessionId"`
-	ParentRunID   string             `json:"parentRunId,omitempty"`
-	ParentStepID  string             `json:"parentStepId,omitempty"`
-	Kind          string             `json:"kind"`
-	Title         string             `json:"title"`
-	Prompt        string             `json:"prompt"`
-	Source        string             `json:"source,omitempty"` // workflow markdown
-	WorkflowFile  string             `json:"workflowFile,omitempty"`
-	Workflow      *workflow.Workflow `json:"workflow,omitempty"`
-	Mode          string             `json:"mode,omitempty"`          // mode requested when started ("" = auto)
-	Task          string             `json:"task,omitempty"`          // task from the library this run follows
-	TaskFile      string             `json:"taskFile,omitempty"`      // or the Markdown file on the server it follows
-	TaskTitle     string             `json:"taskTitle,omitempty"`     // the task's name, for display
-	Note          string             `json:"note,omitempty"`          // what the user added to the task
-	Target        string             `json:"target,omitempty"`        // manager runs: the task run asked about
-	Parallel      int                `json:"parallel,omitempty"`      // Codex working on the task at once (sub-agents); 0/1 = one
-	Network       bool               `json:"network,omitempty"`       // agent commands may use the network
-	WritableRoots []string           `json:"writableRoots,omitempty"` // extra sandbox-writable dirs (e.g. .git for git sync)
-	Vars          map[string]string  `json:"vars,omitempty"`
-	Cwd           string             `json:"cwd"`
-	NodeID        string             `json:"nodeId"`
-	Model         string             `json:"model,omitempty"`
-	Sandbox       string             `json:"sandbox,omitempty"`
-	Status        Status             `json:"status"`
-	Steps         []*Step            `json:"steps"`
-	Output        string             `json:"output,omitempty"`
-	Error         string             `json:"error,omitempty"`
-	Activity      string             `json:"activity,omitempty"`
-	CreatedAt     time.Time          `json:"createdAt"`
-	StartedAt     *time.Time         `json:"startedAt,omitempty"`
-	EndedAt       *time.Time         `json:"endedAt,omitempty"`
-	RetryOf       string             `json:"retryOf,omitempty"`
+	ID        string     `json:"id"`
+	SessionID string     `json:"sessionId"`
+	Kind      string     `json:"kind"`
+	Title     string     `json:"title"`
+	Prompt    string     `json:"prompt"`
+	Task      string     `json:"task,omitempty"`      // task from the library this run follows
+	TaskFile  string     `json:"taskFile,omitempty"`  // or the Markdown file on the server it follows
+	TaskTitle string     `json:"taskTitle,omitempty"` // the task's name, for display
+	Note      string     `json:"note,omitempty"`      // what the user added to the task
+	Target    string     `json:"target,omitempty"`    // manager runs: the task run asked about
+	Parallel  int        `json:"parallel,omitempty"`  // Codex working on the task at once (sub-agents); 0/1 = one
+	Cwd       string     `json:"cwd"`
+	NodeID    string     `json:"nodeId"`
+	Model     string     `json:"model,omitempty"`
+	Sandbox   string     `json:"sandbox,omitempty"`
+	Status    Status     `json:"status"`
+	Steps     []*Step    `json:"steps"` // always one: the Codex doing the work
+	Output    string     `json:"output,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Activity  string     `json:"activity,omitempty"`
+	CreatedAt time.Time  `json:"createdAt"`
+	StartedAt *time.Time `json:"startedAt,omitempty"`
+	EndedAt   *time.Time `json:"endedAt,omitempty"`
+	RetryOf   string     `json:"retryOf,omitempty"`
 }
 
 // Process describes an OS process AgentHost launched for a step.
@@ -107,38 +96,31 @@ type Process struct {
 	Error     string     `json:"error,omitempty"`
 }
 
+// Step is the Codex working on a run: its thread, processes and timeline.
 type Step struct {
-	ID              string          `json:"id"`
-	Title           string          `json:"title"`
-	Type            string          `json:"type"`
-	DependsOn       []string        `json:"dependsOn"`
-	If              string          `json:"if"`
-	ContinueOnError bool            `json:"continueOnError,omitempty"`
-	Status          Status          `json:"status"`
-	Attempt         int             `json:"attempt"`
-	MaxAttempts     int             `json:"maxAttempts"`
-	Cwd             string          `json:"cwd"`
-	Prompt          string          `json:"prompt,omitempty"` // prompt as sent to the agent
-	Run             string          `json:"run,omitempty"`    // shell script
-	Workflow        string          `json:"workflow,omitempty"`
-	ChildRunID      string          `json:"childRunId,omitempty"`
-	ThreadID        string          `json:"threadId,omitempty"`
-	TurnID          string          `json:"turnId,omitempty"`
-	Processes       []*Process      `json:"processes,omitempty"`
-	Items           []*Item         `json:"items"`
-	Output          string          `json:"output,omitempty"`
-	Error           string          `json:"error,omitempty"`
-	ExitCode        *int            `json:"exitCode,omitempty"`
-	Diff            string          `json:"diff,omitempty"`
-	Plan            []PlanEntry     `json:"plan,omitempty"` // steps reported by an orchestrating agent
-	Orchestrate     bool            `json:"orchestrate,omitempty"`
-	Agents          []*SubAgent     `json:"agents,omitempty"` // sub-Codex the agent started for this step
-	Usage           json.RawMessage `json:"usage,omitempty"`
-	Activity        string          `json:"activity,omitempty"`
-	StartedAt       *time.Time      `json:"startedAt,omitempty"`
-	EndedAt         *time.Time      `json:"endedAt,omitempty"`
+	ID        string          `json:"id"`
+	Title     string          `json:"title"`
+	Status    Status          `json:"status"`
+	Cwd       string          `json:"cwd"`
+	Prompt    string          `json:"prompt,omitempty"` // prompt as sent to Codex
+	ThreadID  string          `json:"threadId,omitempty"`
+	TurnID    string          `json:"turnId,omitempty"`
+	Processes []*Process      `json:"processes,omitempty"`
+	Items     []*Item         `json:"items"`
+	Output    string          `json:"output,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	Diff      string          `json:"diff,omitempty"`
+	Plan      []PlanEntry     `json:"plan,omitempty"`   // steps Codex reported with report_progress
+	Agents    []*SubAgent     `json:"agents,omitempty"` // sub-Codex it started
+	Usage     json.RawMessage `json:"usage,omitempty"`
+	Activity  string          `json:"activity,omitempty"`
+	StartedAt *time.Time      `json:"startedAt,omitempty"`
+	EndedAt   *time.Time      `json:"endedAt,omitempty"`
+}
 
-	def *workflow.Step
+// codexStep is the single step of a new run.
+func codexStep(id, title, cwd, prompt string) []*Step {
+	return []*Step{{ID: id, Title: title, Status: StatusPending, Cwd: cwd, Prompt: prompt, Items: []*Item{}}}
 }
 
 // SubAgent is a Codex sub-agent (its own thread) working on part of a step.
@@ -164,7 +146,6 @@ const (
 	ItemAgent      = "agent"
 	ItemError      = "error"
 	ItemNotice     = "notice"
-	ItemSkills     = "skills" // skills injected into the Codex process
 	ItemOther      = "other"
 )
 

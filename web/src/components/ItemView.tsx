@@ -12,10 +12,8 @@ import {
   Globe,
   Info,
   ListChecks,
-  Sparkles,
   Terminal,
   Wrench,
-  Workflow as WorkflowIcon,
   Circle,
   CircleCheck,
   CircleDot,
@@ -24,7 +22,6 @@ import {
 import type { Item } from "../types";
 import { StatusIcon, fmtDuration, between, Elapsed, shortId } from "../lib/format";
 import { Markdown } from "./Markdown";
-import { ChildRunView } from "./StepCard";
 
 /** "/bin/bash -lc 'npm test'" → "npm test" */
 export function prettyCommand(cmd?: string): string {
@@ -321,25 +318,6 @@ export function ToolCard({ item }: { item: Item }) {
 
 export function AgentCard({ item }: { item: Item }) {
   const [open, setOpen] = useState(true);
-  if (item.tool === "workflow" && item.text) {
-    return (
-      <Disclosure
-        open={open}
-        onToggle={() => setOpen(!open)}
-        header={
-          <>
-            <WorkflowIcon className="h-3.5 w-3.5 shrink-0 text-info" />
-            <span className="min-w-0 flex-1 truncate font-medium">{item.title}</span>
-            <span className="chip font-mono">{shortId(item.text, 10)}</span>
-          </>
-        }
-      >
-        <div className="p-2">
-          <ChildRunView runId={item.text} />
-        </div>
-      </Disclosure>
-    );
-  }
   let states = "";
   if (item.result) {
     try {
@@ -416,38 +394,6 @@ export function NoticeRow({ item }: { item: Item }) {
   );
 }
 
-/** Which skills from the task's code this Codex process was given: one line, tap for details. */
-export function SkillsRow({ item }: { item: Item }) {
-  const lines = (item.text ?? "").split("\n").filter(Boolean);
-  const warn = lines.some((l) => l.startsWith("⚠"));
-  const [open, setOpen] = useState(warn);
-  const names = Array.isArray(item.raw) ? (item.raw as { name?: string }[]).map((s) => s.name).filter(Boolean) : [];
-  const title = (item.title ?? "").replace(/（来自 .*）$/, "");
-  const from = /（来自 (.*)）$/.exec(item.title ?? "")?.[1];
-  return (
-    <div className="rounded-lg bg-info/5 text-[12.5px] text-muted">
-      <button className="flex w-full items-center gap-2 px-3 py-1.5 text-left" onClick={() => setOpen(!open)}>
-        <Sparkles className="h-3.5 w-3.5 shrink-0 text-info" />
-        <span className="min-w-0 flex-1 truncate">
-          <span className="text-fg">{title}</span>
-          {names.length > 0 && <span className="text-faint"> · {names.join("、")}</span>}
-        </span>
-        <ChevronRight className={clsx("h-3.5 w-3.5 shrink-0 text-faint transition-transform", open && "rotate-90")} />
-      </button>
-      {open && (
-        <div className="space-y-0.5 px-3 pb-2 pl-8">
-          {from && <div className="break-all text-faint">来自 {from}</div>}
-          {lines.map((l, i) => (
-            <div key={i} className={clsx("break-words", l.startsWith("⚠") && "text-warn")}>
-              {l}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function OtherCard({ item }: { item: Item }) {
   const [open, setOpen] = useState(false);
   return (
@@ -495,8 +441,8 @@ export function ItemView({ item }: { item: Item }) {
     case "error":
     case "notice":
       return <NoticeRow item={item} />;
-    case "skills":
-      return <SkillsRow item={item} />;
+    case "skills": // older runs: skills AgentHost used to inject
+      return null;
     default:
       return <OtherCard item={item} />;
   }

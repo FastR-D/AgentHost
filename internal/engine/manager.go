@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"agenthost/internal/workflow"
 )
 
 // While a task runs, the user's messages go to a manager: a separate,
@@ -64,13 +62,10 @@ func (e *Engine) askManager(s *Session, target *Run, text string) (json.RawMessa
 	}
 	r := &Run{
 		ID: newID("r"), SessionID: s.ID, Kind: KindManager, Title: truncate(firstLine(text), 80), Prompt: text, Target: target.ID,
-		Cwd: s.Cwd, NodeID: s.NodeID, Model: e.defaultModel(), Sandbox: "read-only", Status: StatusQueued, CreatedAt: time.Now(),
+		Cwd: s.Cwd, NodeID: s.NodeID, Model: e.defaultModel(), Sandbox: CodexSandbox, Status: StatusQueued, CreatedAt: time.Now(),
 	}
-	r.Steps = []*Step{{
-		ID: "manager", Title: "管家", Type: workflow.TypeAgent, DependsOn: []string{}, If: workflow.IfSuccess,
-		Status: StatusPending, MaxAttempts: 1, Cwd: s.Cwd, Prompt: text, Items: []*Item{},
-	}}
-	return e.launch(s, r, nil, 0)
+	r.Steps = codexStep("manager", "管家", s.Cwd, text)
+	return e.launch(s, r)
 }
 
 // managerPrompt is the question with the task's current state. Call with e.mu held.
@@ -299,12 +294,9 @@ func (e *Engine) Steer(runID, text string) error {
 		return errors.New("任务已暂停：先继续任务，再转告")
 	}
 	var steer func(string) error
-	var st *Step
-	for _, s := range r.Steps {
-		if c := rc.steps[s.ID]; c != nil && c.steer != nil {
-			steer, st = c.steer, s
-			break
-		}
+	st := r.Steps[0]
+	if c := rc.step; c != nil {
+		steer = c.steer
 	}
 	e.mu.Unlock()
 	if steer == nil {
@@ -319,4 +311,18 @@ func (e *Engine) Steer(runID, text string) error {
 	e.mu.Unlock()
 	e.logf(r.ID, st.ID, "host", "info", "管家转告 Codex：%s", text)
 	return nil
+}
+
+func statusText(s Status) string {
+	switch s {
+	case StatusCompleted:
+		return "已完成"
+	case StatusFailed:
+		return "失败"
+	case StatusSkipped:
+		return "已跳过"
+	case StatusStopped:
+		return "已停止"
+	}
+	return string(s)
 }

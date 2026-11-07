@@ -1,4 +1,120 @@
-# AgentHost 交接文档（2026-11-05）
+# AgentHost 交接文档（2026-11-07 更新）
+
+> 第 A 部分是 2026-11-07 的工作；第 B 部分是 2026-11-05 的原交接文档，原样保留——其中关于 workflow、技能注入、顶部任务条 / ProcessSheet 的描述已过时，以 A 部分为准。
+
+## A. 部署 / CI / node 连接（2026-11-07）
+
+#### 当前状态
+
+- **Git**: master 分支，tag `v0.1.0`
+- **服务器**: `8.219.191.172`，agenthost 跑在 `/work/agenthost-linux-amd64`，`0.0.0.0:8080`，Caddy 在 80/443 反代
+- **域名**: `labs.fastrd.io`，有 Let's Encrypt 证书，HTTPS/WSS 正常
+- **登录 token / 节点 token**: 不写进仓库；`cd deploy && fab token` / `fab node-token` 查看（服务器上的 `data/token`、`data/node-token`）
+- **部署**: `cd deploy && fab deploy`（Docker 交叉编译 → 上传 → 停旧进程 → 加载 `.env` 启动 → 8080 健康检查）
+
+### 任务 = 一份 Markdown，去掉 workflow 编排和技能注入
+
+- 任务就是 Markdown，原样交给一个 Codex 去做；怎么做、用哪些说明文件都写在 md 里，Codex 自己去读。
+- 删掉了：`internal/workflow`（步骤/依赖/条件/变量/重试/子 workflow）、`engine/shell.go`、`engine/library.go`（workflow 库）、`engine/skills.go`（扫描并通过 `skills/extraRoots/set` 注入 SKILL.md、`$名字`）、`agenthost check`、`/api/workflows`、`/api/skills`、`/sessions/{id}/workflow`、`AGENTHOST_WORKFLOWS`、旧 workflows / skills-lib 目录迁移；前端 `StepCard`/`Pipeline`/workflow 消息、任务库和文件页的“技能”区块。
+- 一个 Run 固定只有一个 Step（`codexStep()`），`scheduler.go` 只负责：等槽位 → 跑这个 Codex → 收尾。`runCtl.step` 取代按步骤的控制表。暂停/继续/停止/重跑、管家、并行子 Codex、`report_progress` 都保留。
+- 旧记录里 kind=`skills` 的条目前端不显示；`#/skills` 链接仍跳到任务库。
+
+### 执行过程：在对话里就地展开
+
+去掉顶部任务条和弹出的执行过程面板。对话里每个任务一行（状态、当前动作、计时、暂停/停止、多步时的进度条），点一下就地展开时间线，底部有重新运行和日志；最终回答不在时间线里重复。
+
+### 沙箱：Codex 永远不用沙箱
+
+**现象**: codex 执行命令时报 `bwrap: No permissions to create a new namespace`，所有命令 exit 1。devcontainer 不支持 user namespaces。
+
+**之前的修复无效**: 沙箱模式是 **hub** 建任务时定的（写进 `Run.Sandbox` 发给 node），node 上设 `AGENTHOST_SANDBOX` 不起作用；管家写死 `read-only`、“保存并测试”用 `--sandbox read-only`，也都要 bwrap。
+
+**现在**: Codex 永远在 devcontainer 里跑，容器就是隔离边界。`settings.go` 里常量 `CodexSandbox="danger-full-access"`、`CodexApproval="never"`：
+- 每次启动都带 `-c sandbox_mode="danger-full-access" -c approval_policy="never"`，`thread/start|resume` 也固定用这两个值；普通任务、管家、“保存并测试”都一样。
+- 删掉了 `AGENTHOST_SANDBOX` / `AGENTHOST_APPROVAL_POLICY`、`network_access`/`writable_roots` 参数、设置页“联网”开关（后端 `NetworkAccess` 字段保留但不再使用）。
+- 只需更新 **hub** 的 binary 即可生效（node 只是照着执行）。
+
+### 已完成的工作（本次 session）
+
+### 基础设施
+- **Dockerfile**: ubuntu:24.04，3 阶段构建（web→go 交叉编译→runtime），去掉 bubblewrap
+- **entrypoint.sh**: 根据 `AGENTHOST_HUB` 自动切 web/node 模式
+- **build.sh**: 本地用 Docker 交叉编译 linux/amd64 binary
+- **deploy/fabfile.py**: `fab deploy/stop/logs/status/token/node-token`
+- **Caddy**: 服务器上已安装，配置在 `/etc/caddy/Caddyfile`，80/443 都反代到 8080
+
+### 功能
+- **node 重连 bug 修复**: `HandleConnect` mutex 无歧义，同名 node 重连 kick 旧连接
+- **node 连接走 WSS**: 运营商对 80 端口 WebSocket 帧有透明代理，改用 443（WSS）后正常
+- **并行"不限"选项**: `parallelUnlimited = -1`，前端显示"不限，越多越好"
+- **首页无 node 提示**: `AGENTHOST_LOCAL_NODE=off` 且无在线 node 时显示引导
+- **版本号**: binary 里注入 git commit + build date，`/api/info` 返回 `0.1.0-abc1234`
+- **PWA**: 加 192/512 PNG icon，Edge/手机可安装
+- **登录框图标对齐**: 用 flexbox 消除 token 图标与文字重叠
+
+### 性能
+- **JS chunk 拆分**: 主 chunk 862KB→164KB（gzip 257→46KB），二次访问命中缓存
+
+### GitHub CI
+- `ci.yml`: test + build linux/amd64 + docker smoke test
+- `release.yml`: 打 tag 发 Release，tarball 包含 binary+start.sh+compose+DEPLOY.md
+- `deploy.yml`: release 发布后自动 SSH 部署（需配 `DEPLOY_SSH_KEY` / `DEPLOY_HOST` secrets）
+
+### 待完成
+
+1. `internal/node` 的 `TestConnectRejections` 还按旧的“拒绝同名重连”写的，现在的行为是踢掉旧连接，测试需要改
+2. `build.sh` 没把 commit 传进构建，线上版本号显示 `0.1.0-dev`
+3. 80 端口 WebSocket 有透明代理问题，node 永远走 WSS（`--hub https://labs.fastrd.io`）
+
+### 架构说明
+
+```
+用户浏览器
+    ↓ HTTPS/WSS
+labs.fastrd.io（Caddy 443/80 → agenthost:8080）
+    ↑ WSS（wss://labs.fastrd.io）
+devcontainer（agenthost node + codex + 代码）
+    - AGENTHOST_SANDBOX=danger-full-access
+    - 容器即隔离边界，不需要 bubblewrap
+    - 一台宿主机可跑多个容器，各自连同一个 web 控制台
+```
+
+### 文件位置
+
+| 路径 | 说明 |
+|---|---|
+| `deploy/Dockerfile` | 容器镜像 |
+| `deploy/fabfile.py` | Fabric 部署脚本 |
+| `deploy/.fab.env` | 部署配置（gitignored） |
+| `build.sh` | 本地 x86-64 交叉编译 |
+| `start.sh` | 启动脚本（web/node/start/stop/logs） |
+| `docker-compose.yml` | web 控制台 |
+| `docker-compose.node.yml` | devcontainer node |
+| `DEPLOY.md` | 部署指南 |
+
+### 服务器操作
+
+```bash
+# 部署新版
+cd /work/agenthost-linux-amd64
+kill $(cat agenthost.pid); sleep 2
+# 上传新 binary（需先 kill 进程）
+AGENTHOST_ADDR=0.0.0.0:8080 AGENTHOST_LOCAL_NODE=off \
+  nohup ./bin/agenthost >> agenthost.log 2>&1 &
+echo $! > agenthost.pid
+
+# 查看日志
+tail -f /work/agenthost-linux-amd64/agenthost.log
+
+# Caddy 配置
+cat /etc/caddy/Caddyfile
+systemctl reload caddy
+```
+
+
+---
+
+## B. 原交接文档（2026-11-05）
 
 ## 1. 最近完成：任务 + 按任务注入 skill（2026-11-05，已部署到线上实例）
 

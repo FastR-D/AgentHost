@@ -20,7 +20,7 @@ export function ServerSheet({ onClose }: { onClose: () => void }) {
   const current = useCurrentNode();
   const active = useMemo(() => {
     const c: Record<string, number> = {};
-    for (const r of Object.values(runs)) if (!r.parentRunId && r.kind !== "manager" && isActive(r.status)) c[r.nodeId] = (c[r.nodeId] ?? 0) + 1;
+    for (const r of Object.values(runs)) if (r.kind !== "manager" && isActive(r.status)) c[r.nodeId] = (c[r.nodeId] ?? 0) + 1;
     return c;
   }, [runs]);
   return (

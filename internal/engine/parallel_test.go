@@ -7,7 +7,7 @@ import (
 )
 
 func TestParallel(t *testing.T) {
-	e := newTestEngine(t, nil)
+	e := newTestEngine(t)
 	tk, err := e.Tasks().Save(Task{Title: "拆开做", Parallel: 3, Body: "把 a 和 b 都做了"})
 	if err != nil {
 		t.Fatal(err)

@@ -11,7 +11,6 @@ import { Thread } from "./Thread";
 import { WhereChip } from "./DirPicker";
 import { GitBar } from "./GitBar";
 import { TaskSheet, runTaskInSession } from "./TaskSheet";
-import { ProcessSheet, TaskBar } from "./TaskBar";
 
 function textOf(m: AppendMessage): string {
   return m.content
@@ -53,7 +52,6 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   const lastTask = tasks[tasks.length - 1];
   const taskRunning = !!lastTask && isActive(lastTask.status);
   const activeManager = runs.find((r) => r.kind === "manager" && isActive(r.status));
-  const processOpen = useStore((s) => !!s.processRun);
 
   const runtime = useExternalStoreRuntime<ThreadMessageLike>({
     messages,
@@ -91,13 +89,11 @@ export function ChatView({ sessionId }: { sessionId: string }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <SessionHeader sessionId={sessionId} lastRunId={lastTask?.id} />
-      {lastTask && <TaskBar run={lastTask} />}
       <div className="min-h-0 flex-1">
         <AssistantRuntimeProvider runtime={runtime}>
           <Thread taskRunning={taskRunning} onTask={() => setTaskOpen(true)} />
         </AssistantRuntimeProvider>
       </div>
-      {processOpen && <ProcessSheet />}
       {taskOpen && <TaskSheet onClose={() => setTaskOpen(false)} onRun={(task, note, parallel) => runTaskInSession(sessionId, task, note, parallel)} />}
     </div>
   );

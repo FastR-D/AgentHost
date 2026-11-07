@@ -246,7 +246,6 @@ func (e *Engine) GitSync(sessionID, note string) (json.RawMessage, error) {
 	if n := strings.TrimSpace(note); n != "" {
 		text += "\n\n补充要求：" + n
 	}
-	// The sandbox protects .git by default; git sync must be able to commit.
 	st, err := e.GitStatus(sessionID)
 	if err != nil {
 		return nil, err
@@ -254,8 +253,5 @@ func (e *Engine) GitSync(sessionID, note string) (json.RawMessage, error) {
 	if !st.Repo || st.Root == "" {
 		return nil, errors.New("这个会话的目录不是 Git 仓库")
 	}
-	return e.startChat(ChatRequest{SessionID: sessionID, Text: text}, "同步到 Git 远端", true, gitDir(st.Root))
+	return e.startChat(ChatRequest{SessionID: sessionID, Text: text}, "同步到 Git 远端")
 }
-
-// gitDir is where git keeps its data for a work tree root.
-func gitDir(root string) string { return strings.TrimSuffix(root, "/") + "/.git" }

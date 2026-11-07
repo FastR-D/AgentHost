@@ -5,16 +5,12 @@ import type {
   GitStatus,
   Info,
   LogEntry,
-  Mode,
   NodeInfo,
-  ParseResult,
   Run,
   RunStats,
   Session,
   SettingsView,
-  SkillScan,
   Task,
-  WorkflowInfo,
 } from "./types";
 
 export class ApiError extends Error {
@@ -72,20 +68,12 @@ export const api = {
   /** A message, or a task (with text as extra instructions). */
   chat: (sessionId: string, text: string, task?: { task?: string; taskFile?: string; parallel?: number }) =>
     req<LaunchResult>("POST", `/sessions/${encodeURIComponent(sessionId)}/chat`, { text, ...task }),
-  startWorkflow: (
-    sessionId: string,
-    body: { name?: string; source?: string; cwd?: string; vars?: Record<string, string>; mode?: Mode },
-  ) => req<LaunchResult>("POST", `/sessions/${encodeURIComponent(sessionId)}/workflow`, body),
   /** Start a run, in a new session unless sessionId is given. */
   startTask: (body: {
     sessionId?: string;
     title?: string;
     cwd?: string;
     text?: string;
-    workflow?: string;
-    source?: string;
-    vars?: Record<string, string>;
-    mode?: Mode;
     nodeId?: string;
     /** A task from the library; a new session defaults to its server and directory. */
     task?: string;
@@ -115,23 +103,11 @@ export const api = {
     req<any>("POST", `/runs/${encodeURIComponent(id)}/${action}`),
   logs: (id: string, after = 0) => req<LogEntry[]>("GET", `/runs/${encodeURIComponent(id)}/logs?after=${after}`),
 
-  workflows: () => req<{ dir: string; workflows: WorkflowInfo[] }>("GET", "/workflows"),
-  workflow: (name: string) =>
-    req<{ name: string; source: string; parsed: ParseResult }>("GET", `/workflows/${encodeURIComponent(name)}`),
-  saveWorkflow: (name: string, source: string) =>
-    req<{ name: string; parsed: ParseResult }>("PUT", `/workflows/${encodeURIComponent(name)}`, { source }),
-  deleteWorkflow: (name: string) => req("DELETE", `/workflows/${encodeURIComponent(name)}`),
-  parseWorkflow: (source: string, name = "", mode: Mode = "") =>
-    req<ParseResult>("POST", "/workflows/parse", { source, name, mode }),
-
   tasks: () => req<Task[]>("GET", "/tasklib"),
   task: (name: string) => req<Task>("GET", `/tasklib/${encodeURIComponent(name)}`),
   createSavedTask: (t: Partial<Task>) => req<Task>("POST", "/tasklib", t),
   saveTask: (name: string, t: Partial<Task>) => req<Task>("PUT", `/tasklib/${encodeURIComponent(name)}`, t),
   deleteTask: (name: string) => req("DELETE", `/tasklib/${encodeURIComponent(name)}`),
-  /** Skills in a directory's code (searches the whole repository it belongs to). */
-  skills: (node: string, path: string) =>
-    req<SkillScan>("GET", `/skills?node=${encodeURIComponent(node)}&path=${encodeURIComponent(path)}`),
 
   dirs: (path?: string, node?: string) => {
     const q = new URLSearchParams();
