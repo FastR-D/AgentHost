@@ -242,24 +242,18 @@ func (g *Registry) HandleConnect(w http.ResponseWriter, r *http.Request) {
 
 	rem := newRemote(ws, info)
 
-	// If a connection with the same name already exists, kick it and wait for
-	// its serve() goroutine to clean up before registering the new one.
+	// If a connection with the same name already exists, reject the new one.
+	// The reconnecting node will retry and succeed once the old connection is gone.
 	g.mu.Lock()
-	if old := g.remotes[info.ID]; old != nil {
+	if g.remotes[info.ID] != nil {
 		g.mu.Unlock()
-		old.kick("被同名新连接取代")
-		// Wait up to 1 s for the old handler to remove itself from g.remotes.
-		deadline := time.Now().Add(time.Second)
-		for time.Now().Before(deadline) {
-			time.Sleep(25 * time.Millisecond)
-			g.mu.Lock()
-			gone := g.remotes[info.ID] == nil
-			g.mu.Unlock()
-			if gone {
-				break
-			}
-		}
-		g.mu.Lock() // re-acquire for the registration below
+		ws.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation,
+				fmt.Sprintf("同名服务器 %s 已在线，请等该连接断开后再重试", info.Name)),
+			time.Now().Add(time.Second))
+		ws.Close()
+		slog.Warn("rejected node: duplicate name", "name", info.Name)
+		return
 	}
 	// g.mu is locked here in all paths.
 	g.remotes[info.ID] = rem

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import clsx from "clsx";
-import { Bot, ChevronRight, Loader2, Pause, Play, RotateCcw, Square, StepForward, Users } from "lucide-react";
+import { Bot, ChevronRight, ChevronUp, Loader2, Pause, Play, RotateCcw, Square, StepForward, Users } from "lucide-react";
 import type { Item, Run, Step, SubAgent } from "../types";
 import { isActive } from "../types";
 import { control } from "../store";
@@ -186,6 +186,13 @@ function SubAgentCard({ agent, items }: { agent: SubAgent; items: Item[] }) {
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2">
           {shown.length === 0 ? <div className="text-[12.5px] text-faint">还没有动作</div> : shown.map((it) => <ItemView key={it.id} item={it} />)}
+          {shown.length > 3 && (
+            <div className="flex justify-end">
+              <button className="btn-ghost !px-1.5 !py-0.5 text-[12px]" onClick={() => setOpen(false)} title="收起">
+                <ChevronUp className="h-3.5 w-3.5" /> 收起
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -201,6 +208,12 @@ export function ProcessLine({ run }: { run: Run }) {
     if (open) openRuns.delete(run.id);
     else openRuns.add(run.id);
     setOpen(!open);
+  };
+  // From the bottom of a long timeline: fold it and bring its line back into view.
+  const collapse = () => {
+    openRuns.delete(run.id);
+    setOpen(false);
+    requestAnimationFrame(() => document.getElementById(`proc-${run.id}`)?.scrollIntoView({ block: "nearest" }));
   };
   const st = run.steps[0];
   return (
@@ -226,8 +239,13 @@ export function ProcessLine({ run }: { run: Run }) {
               <Loader2 className="h-3.5 w-3.5 animate-spin" /> {nowText(run)}
             </div>
           )}
-          <div className="border-t border-line pt-2">
-            <RunControls run={run} size="xs" />
+          <div className="flex items-center gap-1 border-t border-line pt-2">
+            <div className="min-w-0 flex-1">
+              <RunControls run={run} size="xs" />
+            </div>
+            <button className="btn-ghost shrink-0 !px-1.5 !py-0.5 text-[12px]" onClick={collapse} title="收起执行过程">
+              <ChevronUp className="h-3.5 w-3.5" /> 收起
+            </button>
           </div>
         </div>
       )}

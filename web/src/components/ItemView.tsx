@@ -5,6 +5,7 @@ import {
   Bot,
   Brain,
   ChevronRight,
+  ChevronUp,
   FileDiff,
   FilePlus2,
   FileMinus2,
@@ -33,6 +34,26 @@ export function prettyCommand(cmd?: string): string {
   return cmd;
 }
 
+/** A "收起" button at the bottom of an unfolded box: folds it and brings its
+ *  header back into view, so a long box can be closed without scrolling up. */
+export function BottomCollapse({ onCollapse, target }: { onCollapse: () => void; target: React.RefObject<HTMLElement> }) {
+  return (
+    <div className="flex justify-end px-2 py-1">
+      <button
+        type="button"
+        className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[12px] text-muted hover:bg-panel hover:text-fg"
+        onClick={() => {
+          onCollapse();
+          requestAnimationFrame(() => target.current?.scrollIntoView({ block: "nearest" }));
+        }}
+        title="收起"
+      >
+        <ChevronUp className="h-3.5 w-3.5" /> 收起
+      </button>
+    </div>
+  );
+}
+
 function Disclosure({
   open,
   onToggle,
@@ -46,8 +67,9 @@ function Disclosure({
   children: React.ReactNode;
   className?: string;
 }) {
+  const root = useRef<HTMLDivElement>(null);
   return (
-    <div className={clsx("overflow-hidden rounded-lg border border-line bg-bg", className)}>
+    <div ref={root} className={clsx("overflow-hidden rounded-lg border border-line bg-bg", className)}>
       <button
         type="button"
         onClick={onToggle}
@@ -56,7 +78,14 @@ function Disclosure({
         <ChevronRight className={clsx("h-3.5 w-3.5 shrink-0 text-faint transition-transform", open && "rotate-90")} />
         {header}
       </button>
-      {open && <div className="border-t border-line">{children}</div>}
+      {open && (
+        <div className="border-t border-line">
+          {children}
+          <div className="border-t border-line">
+            <BottomCollapse onCollapse={onToggle} target={root} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -349,6 +378,7 @@ export function AgentCard({ item }: { item: Item }) {
 
 export function ReasoningView({ text, running, startedAt, endedAt }: { text?: string; running?: boolean; startedAt?: string; endedAt?: string }) {
   const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
   if (running) {
     return (
       <div className="py-0.5">
@@ -364,14 +394,19 @@ export function ReasoningView({ text, running, startedAt, endedAt }: { text?: st
   const dur = between(startedAt, endedAt);
   const title = text.match(/^\*\*(.+?)\*\*/)?.[1];
   return (
-    <div className="py-0.5">
+    <div ref={root} className="py-0.5">
       <button onClick={() => setOpen(!open)} className="flex items-center gap-2 text-[13px] text-muted hover:text-fg">
         <Brain className="h-3.5 w-3.5 text-faint" />
         <span>{title ? `思考：${title}` : "思考过程"}</span>
         {dur ? <span className="text-faint">{fmtDuration(dur)}</span> : null}
         <ChevronRight className={clsx("h-3 w-3 transition-transform", open && "rotate-90")} />
       </button>
-      {open && <Markdown text={text} className="ml-5 mt-1 border-l-2 border-line pl-3 text-muted [&_*]:text-muted" />}
+      {open && (
+        <>
+          <Markdown text={text} className="ml-5 mt-1 border-l-2 border-line pl-3 text-muted [&_*]:text-muted" />
+          <BottomCollapse onCollapse={() => setOpen(false)} target={root} />
+        </>
+      )}
     </div>
   );
 }

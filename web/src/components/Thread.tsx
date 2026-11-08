@@ -1,4 +1,4 @@
-import { useState, type FC } from "react";
+import { useRef, useState, type FC } from "react";
 import clsx from "clsx";
 import {
   AuiIf,
@@ -14,7 +14,7 @@ import remarkGfm from "remark-gfm";
 import { ArrowDown, ArrowUp, Bot, ClipboardList, FileText, Square, ChevronRight } from "lucide-react";
 import { useStore, navigate } from "../store";
 import type { Item } from "../types";
-import { ItemView, ReasoningView } from "./ItemView";
+import { BottomCollapse, ItemView, ReasoningView } from "./ItemView";
 import { Markdown, fixCjkEmphasis, mdComponents } from "./Markdown";
 import { useRun } from "./RunControls";
 import { ActionChip, ManagerBusy, ManagerTag, OutcomeLine, ProcessLine, TaskDoneLine } from "./TaskBar";
@@ -86,6 +86,7 @@ const NOTE_SEP = "\n\n---\n\n补充说明：";
 const TaskRequestPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
   const run = useRun(data.runId);
   const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
   if (!run) return null;
   const file = run.taskFile;
   const body = run.note && run.prompt.endsWith(NOTE_SEP + run.note) ? run.prompt.slice(0, -(NOTE_SEP + run.note).length) : run.prompt;
@@ -94,7 +95,7 @@ const TaskRequestPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
     else if (file) navigate({ page: "files", node: run.nodeId, path: file.slice(0, file.lastIndexOf("/")) || "/", file });
   };
   return (
-    <div className="min-w-[200px]">
+    <div ref={root} className="min-w-[200px]">
       <button
         className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-info/10 px-2.5 py-0.5 text-[12.5px] text-info"
         onClick={go}
@@ -114,6 +115,7 @@ const TaskRequestPart: FC<DataMessagePartProps<Ref>> = ({ data }) => {
           <Markdown text={body} />
         </div>
       )}
+      {open && <BottomCollapse onCollapse={() => setOpen(false)} target={root} />}
     </div>
   );
 };
