@@ -31,7 +31,7 @@ export function CopyButton({ text, label = "复制" }: { text: string; label?: s
 }
 
 function JoinGuide() {
-  const [join, setJoin] = useState<{ hub: string; token: string } | null>(null);
+  const [join, setJoin] = useState<{ hub: string; token: string; version: string } | null>(null);
   const [hub, setHub] = useState("");
   const [name, setName] = useState("server-2");
   const [show, setShow] = useState(false);
@@ -44,7 +44,7 @@ function JoinGuide() {
   if (!join) return null;
   const tok = show ? join.token : join.token.slice(0, 4) + "…" + join.token.slice(-4);
   const script = `./start.sh node --hub ${hub} --token ${join.token} --name ${name}`;
-  const version = "v0.2.0";
+  const version = "v" + (join.version || "0.2.1").replace(/-.*$/, "");
   const releaseUrl = `https://github.com/FastR-D/AgentHost/releases/download/${version}/agenthost-linux-amd64.tar.gz`;
   const scriptDeploy = `curl -L ${releaseUrl} | tar -xz && cd agenthost-linux-amd64 && ./start.sh node --deploy --daemon --hub ${hub} --token ${join.token} --name ${name}`;
   const docker = `docker run -d --name agenthost-node --restart unless-stopped \\

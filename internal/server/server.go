@@ -704,7 +704,7 @@ func (s *Server) routeNodes(w http.ResponseWriter, r *http.Request, parts []stri
 			}
 			hub = scheme + "://" + r.Host
 		}
-		writeJSON(w, 200, map[string]string{"hub": hub, "token": reg.Token()})
+		writeJSON(w, 200, map[string]string{"hub": hub, "token": reg.Token(), "version": fmt.Sprintf("%v", s.info["version"])})
 	case len(parts) == 1 && r.Method == http.MethodDelete:
 		if err := reg.Forget(parts[0]); err != nil {
 			return bad(err.Error())

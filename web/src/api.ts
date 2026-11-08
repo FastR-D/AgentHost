@@ -117,7 +117,7 @@ export const api = {
   },
 
   nodes: () => req<{ nodes: NodeInfo[]; default: string }>("GET", "/nodes"),
-  nodeJoin: () => req<{ hub: string; token: string }>("GET", "/nodes/join"),
+  nodeJoin: () => req<{ hub: string; token: string; version: string }>("GET", "/nodes/join"),
   forgetNode: (id: string) => req("DELETE", `/nodes/${encodeURIComponent(id)}`),
 
   settings: () => req<SettingsView>("GET", "/settings"),

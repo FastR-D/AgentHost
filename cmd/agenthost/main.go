@@ -29,7 +29,7 @@ import (
 	"agenthost/internal/server"
 )
 
-const version = "0.1.0"
+const version = "0.2.1"
 
 // build metadata injected by -ldflags
 var (
