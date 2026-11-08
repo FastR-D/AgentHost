@@ -11,6 +11,8 @@
 #   ./start.sh --install-only  install deps and build only
 #   ./start.sh node --hub URL --token T [--name N] [--workspace DIR]
 #                              run as a task node (dials out, can sit behind NAT)
+#   ./start.sh node --deploy --hub URL --token T [--name N] [--workspace DIR]
+#                              run as node from a release package (skip all installs)
 #
 # Configuration from .env or environment variables:
 #   AGENTHOST_ADDR           listen address                 (default 0.0.0.0:80)
@@ -96,6 +98,7 @@ case "${1:-}" in
       case "$arg" in
         --rebuild) REBUILD=1 ;;
         --install-only) INSTALL_ONLY=1 ;;
+        --deploy) AGENTHOST_SKIP_INSTALL=1; SKIP_BUILD=1 ;;
         *) NODE_ARGS+=("$arg") ;;
       esac
     done
@@ -115,6 +118,7 @@ for arg in "$@"; do
 done
 
 DAEMON="${DAEMON:-0}"
+SKIP_BUILD="${SKIP_BUILD:-0}"
 
 # ── env & toolchain ─────────────────────────────────────────────────────────────
 
@@ -300,15 +304,18 @@ build_go() {
 
 # ── main ────────────────────────────────────────────────────────────────────────
 
-ensure_basics
-ensure_go
-ensure_node
-ensure_codex
-check_codex_auth
-log "go $(go env GOVERSION) · node $(node -v) · $( (${CODEX_BIN:-codex} --version 2>/dev/null || echo 'codex: not installed') | head -1)"
-
-build_web
-build_go
+if [[ $SKIP_BUILD == 1 ]]; then
+  [[ -x "$ROOT/bin/agenthost" ]] || die "bin/agenthost not found; run without --deploy to build first"
+else
+  ensure_basics
+  ensure_go
+  ensure_node
+  ensure_codex
+  check_codex_auth
+  log "go $(go env GOVERSION) · node $(node -v) · $( (${CODEX_BIN:-codex} --version 2>/dev/null || echo 'codex: not installed') | head -1)"
+  build_web
+  build_go
+fi
 
 if [[ $INSTALL_ONLY == 1 ]]; then
   log "install complete: $ROOT/bin/agenthost"; exit 0
