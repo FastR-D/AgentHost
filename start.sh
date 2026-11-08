@@ -99,6 +99,7 @@ case "${1:-}" in
         --rebuild) REBUILD=1 ;;
         --install-only) INSTALL_ONLY=1 ;;
         --deploy) AGENTHOST_SKIP_INSTALL=1; SKIP_BUILD=1 ;;
+        --daemon) DAEMON=1 ;;
         *) NODE_ARGS+=("$arg") ;;
       esac
     done
@@ -326,7 +327,17 @@ if [[ $ROLE == node ]]; then
   export AGENTHOST_WORKSPACE="${AGENTHOST_WORKSPACE:-$ROOT/workspace}"
   mkdir -p "$AGENTHOST_DATA" "$AGENTHOST_WORKSPACE"
   log "starting AgentHost node (connects out to ${AGENTHOST_HUB:-the --hub address})"
-  exec "$ROOT/bin/agenthost" node "${NODE_ARGS[@]}"
+  if [[ $DAEMON == 1 ]]; then
+    NODE_LOG="${NODE_LOG:-$ROOT/agenthost-node.log}"
+    setsid "$ROOT/bin/agenthost" node "${NODE_ARGS[@]}" >> "$NODE_LOG" 2>&1 </dev/null &
+    BGPID=$!
+    disown $BGPID
+    echo $BGPID > "$ROOT/agenthost-node.pid"
+    log "node started in background (pid $BGPID), log: $NODE_LOG"
+  else
+    exec "$ROOT/bin/agenthost" node "${NODE_ARGS[@]}"
+  fi
+  exit 0
 fi
 
 export AGENTHOST_DATA="${AGENTHOST_DATA:-$ROOT/data}"
