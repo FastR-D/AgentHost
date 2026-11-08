@@ -44,6 +44,9 @@ function JoinGuide() {
   if (!join) return null;
   const tok = show ? join.token : join.token.slice(0, 4) + "…" + join.token.slice(-4);
   const script = `./start.sh node --hub ${hub} --token ${join.token} --name ${name}`;
+  const version = "v0.2.0";
+  const releaseUrl = `https://github.com/FastR-D/AgentHost/releases/download/${version}/agenthost-linux-amd64.tar.gz`;
+  const scriptDeploy = `curl -L ${releaseUrl} | tar -xz && cd agenthost-linux-amd64 && ./start.sh node --deploy --daemon --hub ${hub} --token ${join.token} --name ${name}`;
   const docker = `docker run -d --name agenthost-node --restart unless-stopped \\
   -e AGENTHOST_HUB=${hub} -e AGENTHOST_NODE_TOKEN=${join.token} -e AGENTHOST_NODE_NAME=${name} \\
   -v $PWD/workspace:/workspace -v $PWD/node-data:/data \\
@@ -76,7 +79,16 @@ function JoinGuide() {
       <div className="mt-3 space-y-3">
         <div>
           <div className="mb-1 flex items-center text-[12px] text-faint">
-            在那台机器的 AgentHost 目录里运行（会自动安装 Codex 等依赖）
+            Release 包（推荐）：下载解压后直接启动，后台运行
+            <span className="ml-auto">
+              <CopyButton text={scriptDeploy} />
+            </span>
+          </div>
+          <pre className="term overflow-x-auto rounded-lg border border-line bg-bg p-2.5">{scriptDeploy.replace(join.token, tok)}</pre>
+        </div>
+        <div>
+          <div className="mb-1 flex items-center text-[12px] text-faint">
+            源码目录（会自动安装 Codex 等依赖，前台运行）
             <span className="ml-auto">
               <CopyButton text={script} />
             </span>
