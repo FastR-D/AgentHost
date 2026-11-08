@@ -40,9 +40,12 @@ docker compose logs | grep "Open:"
 
 ### 方式 B：用编译好的二进制
 
-从 GitHub Release 下载 `agenthost-linux-amd64.tar.gz`，解压后直接运行：
-
 ```bash
+# 下载最新版本（替换版本号为 GitHub Releases 最新版）
+curl -L https://github.com/FastR-D/AgentHost/releases/download/v0.2.0/agenthost-linux-amd64.tar.gz \
+  -o agenthost-linux-amd64.tar.gz
+
+# 解压
 tar -xzf agenthost-linux-amd64.tar.gz
 cd agenthost-linux-amd64
 
@@ -95,14 +98,33 @@ docker compose -f docker-compose.node.yml logs -f
 
 多节点：在 `docker-compose.node.yml` 里复制 `agenthost-node` 块，改不同的 `container_name` 和 `AGENTHOST_NODE_NAME` 即可。
 
-### 方式 B：编译好的二进制
+### 方式 B：编译好的二进制（直接在宿主机跑）
 
 ```bash
+# 下载（替换版本号为最新版）
+curl -L https://github.com/FastR-D/AgentHost/releases/download/v0.2.0/agenthost-linux-amd64.tar.gz \
+  -o agenthost-linux-amd64.tar.gz
+
+# 解压
 tar -xzf agenthost-linux-amd64.tar.gz
 cd agenthost-linux-amd64
+
+# 作为 node 连到 Web 控制台（替换地址和令牌）
 AGENTHOST_HUB=https://agenthost.example.com \
 AGENTHOST_NODE_TOKEN=<节点令牌> \
+AGENTHOST_NODE_NAME=gpu-1 \
 ./agenthost node
+```
+
+看到 `已连接 Web 服务器` 就说明节点在线了。想后台运行：
+
+```bash
+nohup env \
+  AGENTHOST_HUB=https://agenthost.example.com \
+  AGENTHOST_NODE_TOKEN=<节点令牌> \
+  AGENTHOST_NODE_NAME=gpu-1 \
+  ./agenthost node >> agenthost-node.log 2>&1 &
+echo "PID $!"
 ```
 
 ## 四、在 Web 控制台拿到节点令牌
