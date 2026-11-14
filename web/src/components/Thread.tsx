@@ -162,8 +162,7 @@ const AssistantMessage: FC = () => (
 const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
 function Composer({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; onTask: () => void; nodeId: string; cwd: string }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { open, entries, loading, activeIndex, setActiveIndex, accept } = useAtMention(textareaRef, nodeId, cwd);
+  const { textareaRef, open, entries, loading, activeIndex, setActiveIndex, accept, handleChange, handleKeyDown } = useAtMention(nodeId, cwd);
   return (
     <ComposerPrimitive.Root className="rounded-2xl border border-line bg-bg shadow-sm focus-within:border-faint">
       {open && (
@@ -184,6 +183,8 @@ function Composer({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; 
           taskRunning ? "任务在后台执行，可以问管家进度，或让它改做法" : coarse ? "给 Codex 发消息，@ 插入文件路径" : "给 Codex 发消息，Enter 发送，Shift+Enter 换行，@ 插入文件路径"
         }
         className="max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] outline-none placeholder:text-faint"
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
       />
       <div className="flex items-center gap-2 px-2.5 pb-2.5">
         <button type="button" className="btn-ghost" onClick={onTask} title="从任务库选一个任务，在这个会话里运行" disabled={taskRunning}>
