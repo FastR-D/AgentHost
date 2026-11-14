@@ -9,7 +9,13 @@ import { Sheet } from "./DirPicker";
 export function switchServer(id: string) {
   setCurrentNode(id);
   const r = parseHash(location.hash);
-  if (r.page === "session") navigate({ page: "home" });
+  // When the target server has work in progress, take the user straight to
+  // the newest task so switching servers does not hide an active run.
+  const activeTask = Object.values(useStore.getState().runs)
+    .filter((run) => run.nodeId === id && run.kind !== "manager" && isActive(run.status))
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+  if (activeTask) navigate({ page: "session", id: activeTask.sessionId });
+  else if (r.page === "session") navigate({ page: "home" });
   else if (r.page === "files") navigate({ page: "files", node: id });
   else if (r.page === "tasks" && r.name) navigate({ page: "tasks" });
 }
