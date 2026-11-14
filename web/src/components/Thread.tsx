@@ -9,6 +9,8 @@ import {
   type DataMessagePartProps,
   type ToolCallMessagePartProps,
 } from "@assistant-ui/react";
+// @ts-ignore — experimental API, available since assistant-ui 0.x
+import { unstable_useComposerInput as useComposerInput } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowDown, ArrowUp, Bot, ClipboardList, FileText, Square, ChevronRight } from "lucide-react";
@@ -18,6 +20,7 @@ import { BottomCollapse, ItemView, ReasoningView } from "./ItemView";
 import { Markdown, fixCjkEmphasis, mdComponents } from "./Markdown";
 import { useRun } from "./RunControls";
 import { ActionChip, ManagerBusy, ManagerTag, OutcomeLine, ProcessLine, TaskDoneLine } from "./TaskBar";
+import { AtMentionInput } from "./AtMention";
 import type { MsgCustom } from "./messages";
 
 // ---------------------------------------------------------------- part renderers
@@ -160,17 +163,29 @@ const AssistantMessage: FC = () => (
 // On touch screens Enter inserts a newline; the send button sends.
 const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
-function Composer({ taskRunning, onTask }: { taskRunning: boolean; onTask: () => void }) {
+function Composer({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; onTask: () => void; nodeId: string; cwd: string }) {
+  const { value, setText, send, isDisabled, canSend } = useComposerInput();
   return (
     <ComposerPrimitive.Root className="rounded-2xl border border-line bg-bg shadow-sm focus-within:border-faint">
-      <ComposerPrimitive.Input
+      <AtMentionInput
+        nodeId={nodeId}
+        cwd={cwd}
+        value={value}
+        onValueChange={setText}
+        onSend={send}
         rows={1}
         autoFocus={!coarse}
-        submitMode={coarse ? "none" : "enter"}
+        disabled={isDisabled}
         placeholder={
-          taskRunning ? "任务在后台执行，可以问管家进度，或让它改做法" : coarse ? "给 Codex 发送消息" : "给 Codex 发送消息，Enter 发送，Shift+Enter 换行"
+          taskRunning ? "任务在后台执行，可以问管家进度，或让它改做法" : coarse ? "给 Codex 发消息，@ 插入文件路径" : "给 Codex 发消息，Enter 发送，Shift+Enter 换行，@ 插入文件路径"
         }
         className="max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] outline-none placeholder:text-faint"
+        onKeyDown={(e) => {
+          if (!coarse && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && canSend) {
+            e.preventDefault();
+            send();
+          }
+        }}
       />
       <div className="flex items-center gap-2 px-2.5 pb-2.5">
         <button type="button" className="btn-ghost" onClick={onTask} title="从任务库选一个任务，在这个会话里运行" disabled={taskRunning}>
@@ -204,7 +219,7 @@ function Composer({ taskRunning, onTask }: { taskRunning: boolean; onTask: () =>
   );
 }
 
-export function Thread({ taskRunning, onTask }: { taskRunning: boolean; onTask: () => void }) {
+export function Thread({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; onTask: () => void; nodeId: string; cwd: string }) {
   return (
     <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
       <ThreadPrimitive.Viewport className="relative flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -215,7 +230,7 @@ export function Thread({ taskRunning, onTask }: { taskRunning: boolean; onTask: 
           <ThreadPrimitive.ScrollToBottom className="absolute -top-9 left-1/2 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-bg shadow-sm hover:bg-sunken disabled:invisible">
             <ArrowDown className="h-4 w-4" />
           </ThreadPrimitive.ScrollToBottom>
-          <Composer taskRunning={taskRunning} onTask={onTask} />
+          <Composer taskRunning={taskRunning} onTask={onTask} nodeId={nodeId} cwd={cwd} />
         </ThreadPrimitive.ViewportFooter>
       </ThreadPrimitive.Viewport>
     </ThreadPrimitive.Root>

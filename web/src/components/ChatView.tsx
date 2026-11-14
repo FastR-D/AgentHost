@@ -93,7 +93,7 @@ export function ChatView({ sessionId }: { sessionId: string }) {
       {lastTask && <TaskBar run={lastTask} />}
       <div className="min-h-0 flex-1">
         <AssistantRuntimeProvider runtime={runtime}>
-          <Thread taskRunning={taskRunning} onTask={() => setTaskOpen(true)} />
+          <Thread taskRunning={taskRunning} onTask={() => setTaskOpen(true)} nodeId={session.nodeId} cwd={session.cwd} />
         </AssistantRuntimeProvider>
       </div>
       {taskOpen && <TaskSheet onClose={() => setTaskOpen(false)} onRun={(task, note, parallel) => runTaskInSession(sessionId, task, note, parallel)} />}
