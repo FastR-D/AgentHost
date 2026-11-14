@@ -46,6 +46,8 @@ type Engine struct {
 	hub *Hub
 	st  *store
 
+	// Lock order: persistMu -> mu. Never wait for a run while holding persistMu.
+	persistMu     sync.Mutex
 	mu            sync.Mutex
 	sessions      map[string]*Session
 	runs          map[string]*Run
@@ -214,6 +216,8 @@ func (e *Engine) persistLoop() {
 
 // Flush writes dirty sessions and runs to disk.
 func (e *Engine) Flush() {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
 	type rec struct {
 		kind, id string
 		data     []byte
@@ -225,6 +229,9 @@ func (e *Engine) Flush() {
 			b, err := json.Marshal(r)
 			if err == nil {
 				recs = append(recs, rec{"runs", id, b})
+			} else {
+				slog.Error("encode failed", "kind", "runs", "id", id, "err", err)
+				continue
 			}
 		}
 		delete(e.dirtyRuns, id)
@@ -234,6 +241,9 @@ func (e *Engine) Flush() {
 			b, err := json.Marshal(s)
 			if err == nil {
 				recs = append(recs, rec{"sessions", id, b})
+			} else {
+				slog.Error("encode failed", "kind", "sessions", "id", id, "err", err)
+				continue
 			}
 		}
 		delete(e.dirtySessions, id)
@@ -242,7 +252,16 @@ func (e *Engine) Flush() {
 	for _, r := range recs {
 		if err := e.st.saveRaw(r.kind, r.id, r.data); err != nil {
 			slog.Error("persist failed", "kind", r.kind, "id", r.id, "err", err)
+			e.mu.Lock()
+			if r.kind == "runs" && e.runs[r.id] != nil {
+				e.dirtyRuns[r.id] = true
+			}
+			if r.kind == "sessions" && e.sessions[r.id] != nil {
+				e.dirtySessions[r.id] = true
+			}
+			e.mu.Unlock()
 		}
+		// Success acknowledges only this snapshot. Updates during I/O stay dirty.
 	}
 }
 
@@ -440,6 +459,8 @@ func (e *Engine) DeleteSession(id string) error {
 		case <-time.After(20 * time.Second):
 		}
 	}
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
 	e.mu.Lock()
 	delete(e.sessions, id)
 	delete(e.dirtySessions, id)

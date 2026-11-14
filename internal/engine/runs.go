@@ -40,6 +40,8 @@ func (e *Engine) RunStats(nodeID string) RunStats {
 // the manager's answers about it and its logs. A session
 // left without runs goes too.
 func (e *Engine) DeleteRun(id string) error {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
 	e.mu.Lock()
 	r := e.runs[id]
 	switch {
@@ -60,6 +62,8 @@ func (e *Engine) DeleteRun(id string) error {
 // nodeID is empty) that ended more than olderThan ago; 0 means every
 // finished run. With dryRun it only counts them.
 func (e *Engine) CleanupRuns(nodeID string, olderThan time.Duration, dryRun bool) int {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
 	cutoff := time.Now().Add(-olderThan)
 	e.mu.Lock()
 	var pick []*Run
