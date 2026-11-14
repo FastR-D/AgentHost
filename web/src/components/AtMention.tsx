@@ -1,55 +1,45 @@
 /**
  * AtMention – @path file autocomplete for composer inputs.
  *
- * Usage: wrap <ComposerPrimitive.Input> with <AtMentionComposer>.
- * It tracks value via onChange (reliable on mobile), shows a panel above
- * the input, and inserts the selected path via the native value setter.
+ * Key insight: compute atQuery synchronously inside handleChange so cursor
+ * and value are never stale (they're the same event's data).
  */
 import { useEffect, useRef, useState } from "react";
 import { File, Folder } from "lucide-react";
 import { api } from "../api";
 
-// ── types ─────────────────────────────────────────────────────────────────────
-
 export interface Entry { name: string; dir: boolean }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-interface AtState {
-  startIndex: number;
-  query: string;
-}
+interface AtState { startIndex: number; query: string }
 
 function parseAt(value: string, cursor: number): AtState | null {
   const before = value.slice(0, cursor);
-  const m = before.match(/(?:^|[\s\n])@([\S]*)$/);
+  // match '@' at start or after whitespace, followed by non-whitespace
+  const m = before.match(/(?:^|[\s\n])@(\S*)$/);
   if (!m) return null;
   return { startIndex: before.lastIndexOf("@"), query: m[1] };
 }
 
-// ── hook ──────────────────────────────────────────────────────────────────────
-
 export function useAtMention(nodeId: string, cwd: string) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Track value & cursor in state so we reliably re-render on every keystroke.
-  const [value, setValue] = useState("");
-  const [cursor, setCursor] = useState(0);
+  // value/cursor stored as a ref for accept(), state for rendering
+  const valueRef = useRef("");
+  const cursorRef = useRef(0);
 
+  const [atState, setAtState] = useState<AtState | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const fetchRef = useRef(0);
 
-  const atState = parseAt(value, cursor);
-
-  // ── fetch when query changes ───────────────────────────────────────────────
+  // ── fetch when query changes ──────────────────────────────────────────────
   useEffect(() => {
     if (!atState) { setEntries([]); return; }
     const { query } = atState;
     const slash = query.lastIndexOf("/");
     const dirPart = slash >= 0 ? query.slice(0, slash) : "";
-    const prefix = slash >= 0 ? query.slice(slash + 1) : query;
+    const prefix  = slash >= 0 ? query.slice(slash + 1) : query;
     const dir = dirPart.startsWith("/")
       ? dirPart
       : [cwd, dirPart].filter(Boolean).join("/");
@@ -59,11 +49,12 @@ export function useAtMention(nodeId: string, cwd: string) {
     api.files(nodeId, dir || cwd)
       .then((list) => {
         if (fetchRef.current !== id) return;
-        const filtered = (list.entries ?? [])
-          .filter((e) => !prefix || e.name.toLowerCase().startsWith(prefix.toLowerCase()))
-          .slice(0, 12)
-          .map((e) => ({ name: e.name, dir: e.dir }));
-        setEntries(filtered);
+        setEntries(
+          (list.entries ?? [])
+            .filter((e) => !prefix || e.name.toLowerCase().startsWith(prefix.toLowerCase()))
+            .slice(0, 12)
+            .map((e) => ({ name: e.name, dir: e.dir }))
+        );
         setActiveIndex(0);
       })
       .catch(() => { if (fetchRef.current === id) setEntries([]); })
@@ -71,13 +62,56 @@ export function useAtMention(nodeId: string, cwd: string) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [atState?.query, nodeId, cwd]);
 
-  // ── onChange: track value + cursor ────────────────────────────────────────
+  // ── onChange: compute atState synchronously from the same event ──────────
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setValue(e.target.value);
-    setCursor(e.target.selectionStart ?? e.target.value.length);
+    const val = e.target.value;
+    const cur = e.target.selectionStart ?? val.length;
+    valueRef.current = val;
+    cursorRef.current = cur;
+    setAtState(parseAt(val, cur));
   };
 
-  // ── onKeyDown: keyboard navigation ────────────────────────────────────────
+  // also catch cursor movement without text change (click, arrow keys)
+  const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const el = e.currentTarget;
+    const cur = el.selectionStart ?? el.value.length;
+    if (cur === cursorRef.current) return;
+    cursorRef.current = cur;
+    setAtState(parseAt(valueRef.current, cur));
+  };
+
+  // ── accept: insert path ───────────────────────────────────────────────────
+  const accept = (name: string, isDir: boolean) => {
+    const el = textareaRef.current;
+    const st = atState;
+    if (!el || !st) return;
+    const slash = st.query.lastIndexOf("/");
+    const dirPrefix = slash >= 0 ? st.query.slice(0, slash + 1) : "";
+    const inserted = isDir ? `@${dirPrefix}${name}/` : `@${dirPrefix}${name} `;
+    const before = valueRef.current.slice(0, st.startIndex);
+    const after  = valueRef.current.slice(cursorRef.current);
+    const next   = before + inserted + after;
+    const newPos = before.length + inserted.length;
+
+    // bypass React controlled input
+    const nativeSetter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype, "value"
+    )?.set;
+    nativeSetter?.call(el, next);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+
+    valueRef.current = next;
+    cursorRef.current = newPos;
+    // if dir, keep panel open for further navigation; else close
+    setAtState(isDir ? parseAt(next, newPos) : null);
+
+    requestAnimationFrame(() => {
+      el.setSelectionRange(newPos, newPos);
+      el.focus();
+    });
+  };
+
+  // ── keyboard handler ──────────────────────────────────────────────────────
   const open = !!atState && (loading || entries.length > 0);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -93,40 +127,11 @@ export function useAtMention(nodeId: string, cwd: string) {
       if (entry) { e.preventDefault(); e.stopPropagation(); accept(entry.name, entry.dir); }
     } else if (e.key === "Escape") {
       e.preventDefault(); e.stopPropagation();
-      setEntries([]); setValue((v) => v); // force close
+      setAtState(null); setEntries([]);
     }
   };
 
-  // ── accept: insert path into textarea ────────────────────────────────────
-  const accept = (name: string, isDir: boolean) => {
-    const el = textareaRef.current;
-    if (!el || !atState) return;
-    const slash = atState.query.lastIndexOf("/");
-    const dirPrefix = slash >= 0 ? atState.query.slice(0, slash + 1) : "";
-    const inserted = isDir ? `@${dirPrefix}${name}/` : `@${dirPrefix}${name} `;
-    const before = value.slice(0, atState.startIndex);
-    const after = value.slice(cursor);
-    const next = before + inserted + after;
-    const newPos = before.length + inserted.length;
-
-    // Bypass React's controlled input via the native setter.
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype, "value"
-    )?.set;
-    nativeSetter?.call(el, next);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-
-    // Update our own state to close the panel.
-    setValue(next);
-    setCursor(newPos);
-
-    requestAnimationFrame(() => {
-      el.setSelectionRange(newPos, newPos);
-      el.focus();
-    });
-  };
-
-  return { textareaRef, open, entries, loading, activeIndex, setActiveIndex, accept, handleChange, handleKeyDown };
+  return { textareaRef, open, entries, loading, activeIndex, setActiveIndex, accept, handleChange, handleSelect, handleKeyDown };
 }
 
 // ── panel ─────────────────────────────────────────────────────────────────────

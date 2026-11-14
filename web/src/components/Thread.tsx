@@ -162,7 +162,7 @@ const AssistantMessage: FC = () => (
 const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
 function Composer({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; onTask: () => void; nodeId: string; cwd: string }) {
-  const { textareaRef, open, entries, loading, activeIndex, setActiveIndex, accept, handleChange, handleKeyDown } = useAtMention(nodeId, cwd);
+  const { textareaRef, open, entries, loading, activeIndex, setActiveIndex, accept, handleChange, handleSelect, handleKeyDown } = useAtMention(nodeId, cwd);
   return (
     <ComposerPrimitive.Root className="rounded-2xl border border-line bg-bg shadow-sm focus-within:border-faint">
       {open && (
@@ -184,6 +184,7 @@ function Composer({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; 
         }
         className="max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] outline-none placeholder:text-faint"
         onChange={handleChange}
+        onSelect={handleSelect}
         onKeyDown={handleKeyDown}
       />
       <div className="flex items-center gap-2 px-2.5 pb-2.5">
