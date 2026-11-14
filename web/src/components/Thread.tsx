@@ -9,8 +9,6 @@ import {
   type DataMessagePartProps,
   type ToolCallMessagePartProps,
 } from "@assistant-ui/react";
-// @ts-ignore — experimental API, available since assistant-ui 0.x
-import { unstable_useComposerInput as useComposerInput } from "@assistant-ui/react";
 import { MarkdownTextPrimitive } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
 import { ArrowDown, ArrowUp, Bot, ClipboardList, FileText, Square, ChevronRight } from "lucide-react";
@@ -20,7 +18,7 @@ import { BottomCollapse, ItemView, ReasoningView } from "./ItemView";
 import { Markdown, fixCjkEmphasis, mdComponents } from "./Markdown";
 import { useRun } from "./RunControls";
 import { ActionChip, ManagerBusy, ManagerTag, OutcomeLine, ProcessLine, TaskDoneLine } from "./TaskBar";
-import { AtMentionInput } from "./AtMention";
+import { useAtMention, AtMentionPanel } from "./AtMention";
 import type { MsgCustom } from "./messages";
 
 // ---------------------------------------------------------------- part renderers
@@ -164,28 +162,31 @@ const AssistantMessage: FC = () => (
 const coarse = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
 
 function Composer({ taskRunning, onTask, nodeId, cwd }: { taskRunning: boolean; onTask: () => void; nodeId: string; cwd: string }) {
-  const { value, setText, send, isDisabled, canSend } = useComposerInput();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const { open, entries, loading, activeIndex, setActiveIndex, accept, refresh } = useAtMention(textareaRef, nodeId, cwd);
   return (
     <ComposerPrimitive.Root className="rounded-2xl border border-line bg-bg shadow-sm focus-within:border-faint">
-      <AtMentionInput
-        nodeId={nodeId}
-        cwd={cwd}
-        value={value}
-        onValueChange={setText}
-        onSend={send}
+      {open && (
+        <AtMentionPanel
+          entries={entries}
+          loading={loading}
+          activeIndex={activeIndex}
+          onSelect={accept}
+          onHover={setActiveIndex}
+        />
+      )}
+      <ComposerPrimitive.Input
+        ref={textareaRef}
         rows={1}
         autoFocus={!coarse}
-        disabled={isDisabled}
+        submitMode={coarse ? "none" : "enter"}
         placeholder={
           taskRunning ? "任务在后台执行，可以问管家进度，或让它改做法" : coarse ? "给 Codex 发消息，@ 插入文件路径" : "给 Codex 发消息，Enter 发送，Shift+Enter 换行，@ 插入文件路径"
         }
         className="max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pt-3.5 text-[14px] outline-none placeholder:text-faint"
-        onKeyDown={(e) => {
-          if (!coarse && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && canSend) {
-            e.preventDefault();
-            send();
-          }
-        }}
+        onInput={refresh}
+        onSelect={refresh}
+        onKeyUp={refresh}
       />
       <div className="flex items-center gap-2 px-2.5 pb-2.5">
         <button type="button" className="btn-ghost" onClick={onTask} title="从任务库选一个任务，在这个会话里运行" disabled={taskRunning}>
