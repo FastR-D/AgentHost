@@ -37,17 +37,23 @@ export function useAtMention(
   nodeId: string,
   cwd: string,
 ) {
+  const [el, setEl] = useState<HTMLTextAreaElement | null>(null);
   const [atState, setAtState] = useState<AtState | null>(null);
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const fetchRef = useRef(0);
 
+  // Track when the textarea actually mounts
+  useEffect(() => {
+    setEl(textareaRef.current);
+  });
+
   // ── recompute atState whenever textarea value/cursor changes ────────────────
   const refresh = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    const st = parseAt(el.value, el.selectionStart ?? el.value.length);
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const st = parseAt(textarea.value, textarea.selectionStart ?? textarea.value.length);
     setAtState(st);
     if (!st) setEntries([]);
   }, [textareaRef]);
@@ -81,11 +87,11 @@ export function useAtMention(
 
   // ── insert accepted path ────────────────────────────────────────────────────
   const accept = useCallback((name: string, isDir: boolean) => {
-    const el = textareaRef.current;
-    if (!el || !atState) return;
-    const cursor = el.selectionStart ?? el.value.length;
-    const before = el.value.slice(0, atState.startIndex);
-    const after  = el.value.slice(cursor);
+    const textarea = textareaRef.current;
+    if (!textarea || !atState) return;
+    const cursor = textarea.selectionStart ?? textarea.value.length;
+    const before = textarea.value.slice(0, atState.startIndex);
+    const after  = textarea.value.slice(cursor);
     const slash  = atState.query.lastIndexOf("/");
     const dirPrefix = slash >= 0 ? atState.query.slice(0, slash + 1) : "";
     const inserted = isDir ? `@${dirPrefix}${name}/` : `@${dirPrefix}${name} `;
@@ -95,12 +101,12 @@ export function useAtMention(
     const nativeSetter = Object.getOwnPropertyDescriptor(
       window.HTMLTextAreaElement.prototype, "value"
     )?.set;
-    nativeSetter?.call(el, next);
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    nativeSetter?.call(textarea, next);
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
     const newPos = before.length + inserted.length;
     requestAnimationFrame(() => {
-      el.setSelectionRange(newPos, newPos);
-      el.focus();
+      textarea.setSelectionRange(newPos, newPos);
+      textarea.focus();
       refresh();
     });
   }, [atState, textareaRef, refresh]);
@@ -125,11 +131,26 @@ export function useAtMention(
 
   // Attach/detach keydown listener on the textarea
   useEffect(() => {
-    const el = textareaRef.current;
     if (!el) return;
     el.addEventListener("keydown", onKeyDown, true); // capture so we beat assistant-ui
     return () => el.removeEventListener("keydown", onKeyDown, true);
-  }, [textareaRef, onKeyDown]);
+  }, [el, onKeyDown]);
+
+  // Refresh atState on every input/selectionchange via native listeners
+  useEffect(() => {
+    if (!el) return;
+    const handler = () => setTimeout(refresh, 0); // setTimeout lets DOM settle first
+    el.addEventListener("input", handler);
+    el.addEventListener("keyup", handler);
+    el.addEventListener("click", handler);
+    el.addEventListener("selectionchange", handler);
+    return () => {
+      el.removeEventListener("input", handler);
+      el.removeEventListener("keyup", handler);
+      el.removeEventListener("click", handler);
+      el.removeEventListener("selectionchange", handler);
+    };
+  }, [el, refresh]);
 
   const open = !!atState && (loading || entries.length > 0);
   return { open, entries, loading, activeIndex, setActiveIndex, accept, refresh };
