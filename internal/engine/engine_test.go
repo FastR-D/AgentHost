@@ -492,7 +492,10 @@ func TestPersistenceMarksInterruptedRuns(t *testing.T) {
 	s, _ := e.CreateSession("", "", "")
 	raw, _ := e.StartChat(ChatRequest{SessionID: s.ID, Text: "SLOW"})
 	id := runIDOf(t, raw)
-	waitFor(t, "running", func() bool { return e.snapshot(id).Status == StatusRunning })
+	waitFor(t, "thread started", func() bool {
+		r := e.snapshot(id)
+		return r.Status == StatusRunning && r.Steps[0].ThreadID != ""
+	})
 	e.Flush()
 	e2, err := New(e.cfg)
 	if err != nil {
