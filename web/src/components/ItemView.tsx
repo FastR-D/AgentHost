@@ -36,7 +36,7 @@ export function prettyCommand(cmd?: string): string {
 
 /** A "收起" button at the bottom of an unfolded box: folds it and brings its
  *  header back into view, so a long box can be closed without scrolling up. */
-export function BottomCollapse({ onCollapse, target }: { onCollapse: () => void; target: React.RefObject<HTMLElement> }) {
+export function BottomCollapse({ onCollapse, target }: { onCollapse: () => void; target: React.RefObject<HTMLElement | null> }) {
   return (
     <div className="flex justify-end px-2 py-1">
       <button

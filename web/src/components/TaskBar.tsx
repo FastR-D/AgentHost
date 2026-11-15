@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type JSX } from "react";
 import clsx from "clsx";
 import { Bot, ChevronRight, ChevronUp, Loader2, Pause, Play, RotateCcw, Square, StepForward, Users } from "lucide-react";
 import type { Item, Run, Step, SubAgent } from "../types";
