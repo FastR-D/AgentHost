@@ -41,7 +41,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24.22.2"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -51,6 +51,10 @@ jobs:
 
       - name: Build web UI
         run: npm run build
+        working-directory: web
+
+      - name: Verify paginated log retrieval
+        run: npm test
         working-directory: web
 
       - name: Set up Go

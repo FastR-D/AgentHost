@@ -101,7 +101,16 @@ export const api = {
   run: (id: string) => req<Run>("GET", `/runs/${encodeURIComponent(id)}`),
   control: (id: string, action: "pause" | "resume" | "stop" | "retry" | "continue") =>
     req<any>("POST", `/runs/${encodeURIComponent(id)}/${action}`),
-  logs: (id: string, after = 0) => req<LogEntry[]>("GET", `/runs/${encodeURIComponent(id)}/logs?after=${after}`),
+  logs: async (id: string, after = 0): Promise<LogEntry[]> => {
+    const entries: LogEntry[] = [];
+    const limit = 5000;
+    for (;;) {
+      const page = await req<LogEntry[]>("GET", `/runs/${encodeURIComponent(id)}/logs?after=${after}&limit=${limit}`);
+      entries.push(...page);
+      if (page.length < limit) return entries;
+      after = page[page.length - 1].seq;
+    }
+  },
 
   tasks: () => req<Task[]>("GET", "/tasklib"),
   task: (name: string) => req<Task>("GET", `/tasklib/${encodeURIComponent(name)}`),
