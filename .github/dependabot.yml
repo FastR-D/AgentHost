@@ -9,6 +9,10 @@ updates:
         patterns: ["*"]
   - package-ecosystem: npm
     directory: /web
+    # The current PostCSS configuration uses Tailwind 3; v4 needs a separate migration.
+    ignore:
+      - dependency-name: tailwindcss
+        update-types: ["version-update:semver-major"]
     schedule:
       interval: weekly
     groups:
