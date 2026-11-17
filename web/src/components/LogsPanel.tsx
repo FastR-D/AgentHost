@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { Download, X } from "lucide-react";
-import { useStore, closeLogs } from "../store";
+import { useStore, closeLogs, guard } from "../store";
+import { api } from "../api";
 import type { LogEntry } from "../types";
 
 const sources = [
@@ -29,6 +30,7 @@ export function LogsPanel() {
   const [step, setStep] = useState<string>(panel?.stepId ?? "");
   const [query, setQuery] = useState("");
   const [follow, setFollow] = useState(true);
+  const [downloading, setDownloading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => setStep(panel?.stepId ?? ""), [panel?.runId, panel?.stepId]);
@@ -49,13 +51,18 @@ export function LogsPanel() {
 
   if (!panel) return null;
 
-  const download = () => {
-    const text = logs.map((l) => `${l.time} [${l.source}]${l.stepId ? ` [${l.stepId}]` : ""} ${l.text}`).join("\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
-    a.download = `${panel.runId}.log`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  const download = async () => {
+    setDownloading(true);
+    try {
+      const entries = await guard(api.logs(panel.runId));
+      if (!entries) return;
+      const text = entries.map((l) => `${l.time} [${l.source}]${l.stepId ? ` [${l.stepId}]` : ""} ${l.text}`).join("\n");
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+      a.download = `${panel.runId}.log`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } finally { setDownloading(false); }
   };
 
   return (
@@ -68,7 +75,7 @@ export function LogsPanel() {
               {run?.title} · <span className="font-mono">{panel.runId}</span>
             </div>
           </div>
-          <button className="btn-ghost ml-auto" onClick={download} title="下载日志">
+          <button className="btn-ghost ml-auto" onClick={download} disabled={downloading} title={downloading ? "正在下载完整日志…" : "下载日志"}>
             <Download className="h-4 w-4" />
           </button>
           <button className="btn-ghost" onClick={closeLogs}>

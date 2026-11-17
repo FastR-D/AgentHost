@@ -346,7 +346,8 @@ export async function loadRun(id: string) {
 
 export async function loadLogs(runId: string) {
   set((s) => ({ logs: { ...s.logs, [runId]: s.logs[runId] ?? [] } }));
-  const entries = await api.logs(runId);
+  const entries = await guard(api.logs(runId));
+  if (!entries) return;
   set((s) => {
     const live = (s.logs[runId] ?? []).filter((e) => !entries.length || e.seq > entries[entries.length - 1].seq);
     return { logs: { ...s.logs, [runId]: [...entries, ...live] } };

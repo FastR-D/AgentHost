@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build && touch dist/.gitkeep",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test": "node --experimental-transform-types --test tests/*.test.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.36",
